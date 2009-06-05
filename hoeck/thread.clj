@@ -5,9 +5,9 @@
 ;;; thread stuff
 ;;; ------------
 
-(ns hoeck_misc.thread
+(ns hoeck.thread
   (:use hoeck.library
-        com.infolace.format)
+        clojure.contrib.pprint)
   (:import (java.util.concurrent
             ThreadPoolExecutor
             Executors 

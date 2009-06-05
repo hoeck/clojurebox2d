@@ -1,10 +1,10 @@
 
 
-(ns hoeck_misc.jbox2d
+(ns hoeck.jbox2dtest
   (:use rosado.processing
-        com.infolace.format
+        clojure.contrib.pprint
         hoeck.library
-        hoeck_misc.thread)
+        hoeck.thread)
   (:import (org.jbox2d.common Color3f Settings Vec2)
            (org.jbox2d.collision PolygonDef CircleDef ContactID Shape AABB)
            (org.jbox2d.dynamics Body BodyDef BoundaryListener ContactListener
@@ -240,14 +240,15 @@ x1,y1
         frm (setup-processing app :size [320 200]) ;; creates its own render thread, returns the applet
         wac (start-world-thread wld physics-frames)]
     (.addWindowListener frm (proxy [WindowAdapter] [] 
-                              (windowClosed [e] ;; stop the physhics wim when closing the frame
+                              (windowClosed [e] ;; stop the physhics sim when closing the frame
                                             (wac (fn [_] (interrupt))))))
     (dosync (ref-assoc sim
-                       :world wld ;; read static stuff from here (like size)
+                       :world wld ;; read static stuff from here (like size) (threadsafe??)
                        :world-accessor wac ;; for safely modifying and reading
                        :frame frm
                        :applet app))))
 
+(comment
 
 ;(init)
 ;((@sim :world-accessor) #(println "hello" %) (fn [_] (println "world")))
@@ -255,8 +256,6 @@ x1,y1
 ;(map interrupt '(jbox-physics Animation))
 
 ;(pprint (ps))
-
-
 
 
 ;(.size (@sim :applet))
@@ -273,10 +272,6 @@ x1,y1
 ((@sim :world-accessor)
  #(def tempworld %))
 
-(def
- 
- )
-
 
 (defn get-bodies
   ([world]
@@ -288,9 +283,9 @@ x1,y1
   ([shapes]
      (map #(let [b (.m_body %)] 
              [(.position ) m_userdata]
-              shapes)))
+              shapes))))
 
-
+)
 
 
 

@@ -2,7 +2,7 @@
 
 (ns hoeck.jbox2dtest
   (:use rosado.processing
-        clojure.contrib.pprint
+        (clojure.contrib pprint def)
         hoeck.library
         hoeck.thread)
   (:import (org.jbox2d.common Color3f Settings Vec2)
@@ -156,18 +156,14 @@ x1,y1
 
 ;(def body (make-box (:world @sim) {:pos [5 5] :shape [0.5 0.5]}))
 
-(defn create-world
-  {:arglists '([:lower [x,y] :upper [x,y] :gravity [0 -10]])}
-  ([] (create-world {}))
-  ([args]
-     (let [args (merge {:lower [-200.0 -100.0]
-                        :upper [200.0 200.0]
-                        :gravity [0.0 -10.0]}
-                       args)           
-           aabb (AABB. (vec2 (:lower args)) (vec2 (:upper args))) ;; axis-aligned-bounding-box
-           gravity (vec2 (:gravity args))
-           sleep true]
-       (World. aabb gravity sleep))))
+(defnk create-world
+  [:lower [-200.0 -100.0]
+   :upper [ 200.0  200.0]
+   :gravity [ 0.0  -10.0]]
+  (let [aabb (AABB. (vec2 lower) (vec2 upper));; axis-aligned-bounding-box
+        gravity (vec2 gravity)
+        sleep true]
+    (World. aabb gravity sleep)))
 
 ;(def simple-test
 ;     (let [timestep (/ 1 60.0)
@@ -211,15 +207,16 @@ x1,y1
 ;; (axis-aligned-bounding-box)
 (defn start-world-thread
   "... and return a function to add tasks to the world."
-  [world frequency]
+  [init-world-fn frequency]
   (let [iterations 10
         physics-tasks (ref [])]
-    (background-periodically (fn []
+    (background-periodically (fn [world]
                                ;;(.step world (/ 1 frequency) iterations) ;; run the physics sim for 1/freq second
                                (doseq [t (dosync (do1 @physics-tasks (ref-set physics-tasks [])))]
-                                 (t world)));; run actions on this world, e.g. to observe body state
-                             frequency
-                             'jbox-physics)
+                                 (t world))) ;; run actions on this world, e.g. to observe body state, observer body state by copying it into clojure datastructures
+                             frequency 
+                             :init-fn init-world-fn
+                             :name 'jbox-physics)
     (fn [& fs]
       (dosync (commute physics-tasks (partial reduce conj) fs)))))
 
@@ -235,18 +232,17 @@ x1,y1
 (defn init []
   (let [physics-frames 60
         render-frames 25
-        wld (create-world)
         app (make-applet)
         frm (setup-processing app :size [320 200]) ;; creates its own render thread, returns the applet
-        wac (start-world-thread wld physics-frames)]
-    (.addWindowListener frm (proxy [WindowAdapter] [] 
+        wac (start-world-thread 
+             #(create-world)
+             physics-frames)]
+    (.addWindowListener frm (proxy [WindowAdapter] []
                               (windowClosed [e] ;; stop the physhics sim when closing the frame
                                             (wac (fn [_] (interrupt))))))
-    (dosync (ref-assoc sim
-                       :world wld ;; read static stuff from here (like size) (threadsafe??)
-                       :world-accessor wac ;; for safely modifying and reading
-                       :frame frm
-                       :applet app))))
+    (dosync (ref-assoc sim :world-accessor wac ;; for safely modifying and reading
+                           :frame frm
+                           :applet app))))
 
 (comment
 
@@ -265,13 +261,12 @@ x1,y1
 (defn draw-fn []
   (let [[[cam-x cam-y] scale-factor] (@sim :camera)]
     (scale scale-factor)
-    (translate cam-x cam-y))
-  
-  )
+    (translate cam-x cam-y)
+
+    ))
 
 ((@sim :world-accessor)
  #(def tempworld %))
-
 
 (defn get-bodies
   ([world]

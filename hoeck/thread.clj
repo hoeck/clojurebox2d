@@ -7,7 +7,7 @@
 
 (ns hoeck.thread
   (:use hoeck.library
-        clojure.contrib.pprint)
+        (clojure.contrib pprint def))
   (:import (java.util.concurrent
             ThreadPoolExecutor
             Executors 
@@ -15,15 +15,10 @@
             ScheduledThreadPoolExecutor
             TimeUnit)))
 
-(defn get-timeunit [key]
-  (if-let [tu ({:milli (. TimeUnit MILLISECONDS)
-                :micro (. TimeUnit MICROSECONDS)
-                :nano  (. TimeUnit NANOSECONDS)
-                :sec   (. TimeUnit SECONDS)}
-               key)]
-    tu
-    (throw (Exception. (str "unknown timeunit: " key )))))
-
+(def timeunit {:milli (. TimeUnit MILLISECONDS)
+               :micro (. TimeUnit MICROSECONDS)
+               :nano  (. TimeUnit NANOSECONDS)
+               :sec   (. TimeUnit SECONDS)})
 
 ;;; fn's are now runnable *joy*
 ;;;(defmacro runnable [f]
@@ -37,7 +32,7 @@
   ([f time] (call-repeatedly f time :micro))
   ([f time time-unit]
    (let [s (new ScheduledThreadPoolExecutor 1)]
-     (. s (scheduleAtFixedRate f 0 time (get-timeunit time-unit)))
+     (. s (scheduleAtFixedRate f 0 time (timeunit time-unit)))
      (fn [] (. s (shutdownNow))))))
 
 (defn get-current-threads
@@ -110,7 +105,7 @@
   "Put this thread to sleep for timeunit amount of time
   return true if thread sleep is complete, return false if thread
   was interrupted before or gets interrupted while sleeping."
-  ([milliseconds] (thread-sleep (get-timeunit :milli) milliseconds))
+  ([milliseconds] (thread-sleep (timeunit :milli) milliseconds))
   ([timeunit amount]
      (and (not (interrupted?))
           (try (.sleep timeunit amount)
@@ -136,18 +131,23 @@
                  name)))
 
 
-(defn background-periodically ;; the classical game-loop
+(defnk background-periodically ;; the classical game-loop
   "Call a function f (with side-effects) exactly n times a second, regardless how long the 
-  function takes to execute (must be < (/ 1 times-per-second))."
-  ([f times-per-second] (background-periodically f times-per-second (gensym "background-periodically-")))
-  ([f times-per-second name]
-     (let [period-nanos (/ (.toNanos (get-timeunit :sec) 1) times-per-second)
-           tu (get-timeunit :nano)]
-       (background (fn []
-                     (let [start (System/nanoTime)]
-                       (f)
-                       (if (thread-sleep tu (or (positive? (- period-nanos (- (System/nanoTime) start))) 0)) (recur))))
-                   name))))
+  function takes to execute (must be < (/ 1 times-per-second)).
+    :init-fn names an optional function that is executed before the repeat-loop begins, and f is
+           called repeatedly with its output
+    :name is the name of the created thread"
+  [f times-per-second
+   :init-fn nil
+   :name (gensym "background-periodically-")]
+  (let [period-nanos (/ (.toNanos (timeunit :sec) 1) times-per-second)
+        tu (timeunit :nano)]
+    (background (fn [] (let [init-val (if init-fn (init-fn))]
+                         (loop [start (System/nanoTime)]
+                           (if init-fn (f init-val) (f))
+                           (if (thread-sleep tu (or (positive? (- period-nanos (- (System/nanoTime) start))) 0)) 
+                             (recur (System/nanoTime))))))
+                name)))
 
 (defn in-background
   "call function in background and return a future."

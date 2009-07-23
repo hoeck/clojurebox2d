@@ -17,6 +17,16 @@
            (java.awt.event MouseWheelEvent MouseWheelListener WindowAdapter)           
            (javax.swing JFrame JLabel JTextField JButton)))
 
+(comment
+  (defn unsupported-operation!
+    "throw a java.lang.UnsupportedOperationException with messages as text."
+    [& messages]
+    (throw (UnsupportedOperationException. (apply str messages))))
+
+  (defn illegal-argument! 
+    "throw a java.lang.IllegalArgumentException with messages as text."
+    [& messages]
+    (throw (IllegalArgumentException. (apply str messages)))))
 
 ;; sample draw function
 (defn empty-draw
@@ -32,6 +42,8 @@
   ;(filter-kind INVERT)
   )
 
+(def draw empty-draw)
+
 ;; sample applet implementation
 (defn make-applet []
   (proxy [PApplet] []
@@ -44,11 +56,11 @@
              (size 100 100 P3D)
              (smooth)
              (no-stroke)
-             (fill 55555)
+             (fill 0)
              (framerate 10)))
     (draw [] ;; default draw method
           (binding [*applet* this]
-            (empty-draw)))))
+            (draw)))))
 
 
 (defn setup-processing
@@ -57,7 +69,7 @@
   {:arglists '([applet & :size [width height] :smooth true])}
   [applet & opts]
   (let [{[width height] :size} (as-keyargs opts {:size [200 200]})
-        swing-frame (JFrame. "Processing with Clojure")]
+        swing-frame (JFrame. "cljtest")]
     (.init applet)
     (doto swing-frame
       ;;(.setDefaultCloseOperation JFrame/EXIT_ON_CLOSE)
@@ -66,7 +78,6 @@
       (.pack)
       (.setVisible true))
     swing-frame))
-
 
 ;; convenient constructors
 
@@ -89,100 +100,90 @@ x1,y1
   ([a b c d]
      (AABB. (vec2 a b) (vec2 c d))))
 
+;; bodies & shapes
+
+(defn get-shape-type [clojure-shape-def]
+  (cond (= (count clojure-shape-def) 1) :circle
+        (= (count clojure-shape-def) 2) :box
+        :else :poly))
+
 (defn make-shape-def 
-  "Create a ShapeDef from args which is a hashmap."
-  {:arglists '([:type (:box or :circle or :poly)
-                :shape ([x y]* or a radius for :circle)
-                :angle 0
-                :center [0 0]              
-                :friction 0.3
-                :density 1.0])} ;; keyargs-definition
+  "Create a ShapeDef from args which is a hashmap. Argmap:
+  :shape x     -> radius for :circle
+         [x y] -> :box
+         [[x y] [x y] [x y]+] -> :poly
+  :angle 0
+  :center [0 0]
+  :friction 0.3
+  :density 1.0"
   [args]
   (let [{:keys [shape]} args
-        shape-def (condp = (:type args :box)
+        shape-def (condp = (get-shape-type shape)
                     :box (doto (PolygonDef.)
                            (.setAsBox (shape 0)
                                       (shape 1) 
                                       (vec2 (:center args [0 0]))
-                                      (:angle args 0.0))))]
+                                      (:angle args 0.0)))
+                    (throw (unsupported-operation! "not implemented")))]
     (set! (.density shape-def) (:density args 1.0))
     (set! (.friction shape-def) (:friction args 0.3))
     shape-def))
 
+(defn make-body-def
+  "creates a body def from a shape def and some additional args.
+  hash-map args:
+    :pos [x y]
+    :angle 0
+    :is-bullet false, allow for more perf, set true for fast-moving bodies
+    :allow-sleep true"
+  [shape-def args]
+  (let [{:keys [pos angle bullet allow-sleep]} args]
+    (let [b (BodyDef.)]
+      (-> b .position (.set (-> args :pos vec2)))
+      (set! (.isBullet b) (:bullet args false))
+      (set! (.allowSleep b) (:allow-sleep args true))
+      b)))
 
-(defn make-body-parts
-  "Creates a BodyDef and a ShapeDef from args which is a hashmap."
-  {:arglists '([:pos [x y]
-                :shape [x y] or [x y [center] angle] or radius or [center [x y] [x y] [x y]+]                
-                :is-bullet true
-                :allow-sleep true])}
-  ([args]
-     (let [body-def (let [b (BodyDef.)]
-                      (-> b .position (.set (vec2 (:pos args))))
-                      (set! (.isBullet b) (:is-bullet args true))
-                      (set! (.allowSleep b) (:allow-sleep args true))
-                      b)
-           shape-def (make-shape-def args)]
-       [body-def shape-def])))
+;;(defn make-box-draw-fn
+;;  "Returns a function which creates a function which draws
+;;  the body using processing."
+;;  [body]
+;;  (let [box-verts (.getVertices (.getShapeList body))];; returns a single shape, use .getNext to iterate
+;;    (fn [] ;; call this function in the game thread to get a draw function
+;;      (let [[v1 v2 v3 v4] (map #(.getWorldPoint body %) box-verts)]
+;;        (fn [] ;; use this fn to draw the body
+;;          (quad (.x v1) (.y v1)
+;;                (.x v2) (.y v2)
+;;                (.x v3) (.y v3)
+;;                (.x v4) (.y v4)))))))
 
 
-(defn make-box-draw-fn
-  "Returns a function which creates a function which draws
-  the body using processing."
-  [body]
-  (let [box-verts (.getVertices (.getShapeList body))];; returns a single shape, use .getNext to iterate
-    (fn [] ;; call this function in the game thread to get a draw function
-      (let [[v1 v2 v3 v4] (map #(.getWorldPoint body %) box-verts)]
-        (fn [] ;; use this fn to draw the body
-          (quad (.x v1) (.y v1)
-                (.x v2) (.y v2)
-                (.x v3) (.y v3)
-                (.x v4) (.y v4)))))))
 
-(defn make-box
-  "Create a box in the world using opts.
-  :dynamic true/false  when false, make an unsimulated (ground) body.
-  Hands opts over to `make-body-parts'."
-  {:arglists (list (vec (concat (first (:arglists (meta #'make-body-parts)))
-                                [:dynamic true])))}
-  ([world opts]
-     (let [[bd sd] (make-body-parts opts)
-           box (.createBody world bd)]
-       (.createShape box sd)
-       (if (:dynamic opts true) (.setMassFromShapes box))
-       (.setUserData box {:name (:name opts 'box) :draw-fn (make-box-draw-fn box)})
-       box)))
-
+(defn make-body
+  "Create a body in the world using opts and put
+  name (keyword/symbol) in its user slot.
+  See make-shape-def and make-body-def for valid arg-keys.
+  additionally:
+    :dynamic true/false  when false, make an unsimulated (ground) body."
+  ([world name args]
+     (let [sd (make-shape-def args)
+           bd (make-body-def sd args)
+           body (.createBody world bd)]
+       (.createShape body sd)
+       (if (:dynamic args true) (.setMassFromShapes body))
+       (.setUserData body name)
+       body)))
 
 ;(def body (make-box (:world @sim) {:pos [5 5] :shape [0.5 0.5]}))
 
 (defnk create-world
   [:lower [-200.0 -100.0]
    :upper [ 200.0  200.0]
-   :gravity [ 0.0  -10.0]]
+   :gravity [ 0.0  10.0]]
   (let [aabb (AABB. (vec2 lower) (vec2 upper));; axis-aligned-bounding-box
         gravity (vec2 gravity)
         sleep true]
     (World. aabb gravity sleep)))
-
-;(def simple-test
-;     (let [timestep (/ 1 60.0)
-;           iterations 10
-;           w (create-world)
-;           g (create-box w {:shape [50 50] :pos [0,0] :density 0.0 :dynamic false})
-;           b (create-box w {:shape [1 1] :pos [0 5] :density 1 :friction 0.3})]
-;       {:world w
-;        :step #(.step w timestep iterations)
-;        :body b
-;        :bkoords #(vector (.getPosition b)
-;                          (.getAngle b))}))
-
-;(defn get-bodies
-;  "Return a lazy seq of bodies from a World."
-;  [world]
-;  (let [first-body (.getBodyList world)]
-;    (take-while identity
-;                (iterate #(.getNext %) first-body))))
 
 (defmethod print-method Vec2 [vec2 w]
   (.write w "[")
@@ -229,9 +230,25 @@ x1,y1
 (defn ref-assoc [map & kvs]
   (ref-set map (apply assoc @map kvs)))
 
+(defmacro with-world
+  "execute body in the world thread, wait for its result and return it.
+Waits no more than 2 seconds for the result and returns nil on timeout."
+  [& body]
+  `(let [ret# (java.util.concurrent.ArrayBlockingQueue. 1)]
+     ((:world-accessor @sim)
+      (fn [~'world]
+        (let [result# (do ~@body)]
+          (.add ret# [result#])))) ;; wrap result in vector, to be able to return nil
+     (if-let [return-val# (.poll ret# 2 (timeunit :sec))]
+       (first return-val#))))
+
+(defmacro with-applet [& body]
+  `(binding [*applet* (:applet @sim)]
+     ~@body))
+
 (defn init []
-  (let [physics-frames 60
-        render-frames 25
+  (let [physics-frames 60.0
+        render-frames 25.0
         app (make-applet)
         frm (setup-processing app :size [320 200]) ;; creates its own render thread, returns the applet
         wac (start-world-thread 
@@ -244,17 +261,140 @@ x1,y1
                            :frame frm
                            :applet app))))
 
+
+(defn get-bodies
+  "Return an array of jbox2d Shapes."
+  ([world]
+     (get-bodies world (.getWorldAABB world)))
+  ([world aabb]
+     (.query world aabb (.getBodyCount world))))
+
+(defn get-shape-points
+  "given a body, return a seq of its shape corners 
+  in world-coordinates."
+  [shape] ;; for simple shapes
+  (let [verts (.getVertices shape) ;;(.getShapeList shape)
+        body (.getBody shape)]
+    (map #(.getWorldPoint body %) verts)))
+
+;; jbox objects -> clojure generic datastructures
+(defn query-world
+  ([world]
+     (map 
+      get-shape-points
+      (get-bodies world))))
+
+;(with-world
+;  (query-world world))
+
+;;bodies (query-world world) ;; blocks
+
+(defn my-draw [points-vec]
+  (let [[offset, zoom] (:camera @sim)]
+    (translate offset)
+    (scale zoom)
+    (doseq [[v1 v2 v3 v4] points-vec] ;; assume boxes      
+      (quad (.x v1) (.y v1)
+            (.x v2) (.y v2)
+            (.x v3) (.y v3)
+            (.x v4) (.y v4)))))
+
+
+(defn set-zoom [zoom]
+  (dosync (alter sim assoc-in [:camera 1] zoom)))
+
+(defn set-pos [x y]
+  (dosync (alter sim assoc-in [:camera 0] [x y])))
+
+(defn clear-world
+  "remove all objects from world"
+  [world]
+  
+  )
+
+(comment
+;; test run
+  (do (init)
+      (with-world 
+       (make-body world 'ground
+                  {:shape [10 1]
+                   :pos [0 0]
+                   :dynamic false})
+       (make-body world 'box1
+                  {:shape [1 1]
+                   :pos [0 -10]
+                   :dynamic true}))
+
+      (set-zoom 6)
+      (set-pos 100 100)
+
+      (with-applet
+        (stroke-float 0)
+        (fill 255)
+        (background-int 255)
+        (my-draw (with-world (query-world world)))))
+
+  (dotimes [n 100]
+    (with-world (.step world (/ 1 60.0) 10))
+    (with-applet 
+     (stroke-float 0)
+     (fill 255)
+     (background-int 255)
+     (my-draw (with-world (query-world world))))
+    (Thread/sleep 100))
+
+)
+
+
+
 (comment
 
-;(init)
-;((@sim :world-accessor) #(println "hello" %) (fn [_] (println "world")))
+(init)
 
-;(map interrupt '(jbox-physics Animation))
+;; test processing
+(with-applet
+  (fill 226)
+  (background-float 0 0 0)
+  (fill-float (rand-int 125) (rand-int 125) (rand-int 125))
+  (ellipse 100 100 (rand-int 90) (rand-int 90))
+  (stroke-float 10)
+  (line 10 10 (+ 200 (rand-int 1000)) (+ 200 (rand-int 500)))
+  (no-stroke)
+  (filter-kind INVERT)
+  (ellipse 50 50 (rand-int 90) (rand-int 90)))
 
-;(pprint (ps))
+((@sim :world-accessor) #(println "hello" %) (fn [_] (println "world")))
+
+(with-world
+  (println world)
+  'aaaa)
 
 
-;(.size (@sim :applet))
+(with-world
+  (try   
+   ;;(get-bodies world)
+   (make-body world 'name
+              {:shape [1 1]
+               :pos [0 0]})
+   (catch Exception e e)))
+
+(def xxx
+     (with-world
+       (seq (get-bodies world))))
+
+(-> (get-shape-points (first  xxx)) first type)
+(.getNext (first  xxx))
+org.jbox2d.collision.PolygonShape
+
+
+
+(pprint (ps))
+
+(.size (@sim :applet))
+((@sim :world-accessor) #(println (seq (get-bodies %))))
+
+;; quit physics
+(map interrupt '(jbox-physics Animation))
 
 
 ;; draw-fn
@@ -268,19 +408,8 @@ x1,y1
 ((@sim :world-accessor)
  #(def tempworld %))
 
-(defn get-bodies
-  ([world]
-     (get-bodies world (.getWorldAABB world)))
-  ([world aabb]
-     (.query world aabb (.getBodyCount world))))
-
-(defn extract-bodies
-  ([shapes]
-     (map #(let [b (.m_body %)] 
-             [(.position ) m_userdata]
-              shapes))))
-
 )
+
 
 
 

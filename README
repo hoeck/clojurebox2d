@@ -1,1 +1,16 @@
-clojure api for jbox2d
+Clojure API for jbox2d
+
+requires:
+
+clojure >= 1.0
+clojure.contrib: www.github.com/richhickey/clojure-contrib
+clj-processing: www.github.com/rosado/clj-processing
+
+jbox2d: www.jbox2d.org -- included in deps/
+processing: www.processing.org (core.jar) -- included in deps/
+
+user> (require 'hoeck.clojurebox2d)
+user> (example)
+
+See clojurebox.clj for the definition of example.
+

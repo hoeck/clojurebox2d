@@ -6,8 +6,7 @@
 ;;; ------------
 
 (ns hoeck.thread
-  (:use hoeck.library
-        (clojure.contrib pprint def))
+  (:use (clojure.contrib pprint def))
   (:import (java.util.concurrent
             ThreadPoolExecutor
             Executors 
@@ -59,7 +58,7 @@
                                                   (str ".*" (cond (string? thread-id)
                                                                   thread-id
                                                                   :else
-                                                                  (symbol-name thread-id))
+                                                                  (name thread-id))
                                                        ".*"))]
                                 #(re-find name-pattern (.getName %))))
                         threads))))))
@@ -134,19 +133,23 @@
 (defnk background-periodically ;; the classical game-loop
   "Call a function f (with side-effects) exactly n times a second, regardless how long the 
   function takes to execute (must be < (/ 1 times-per-second)).
-    :init-fn names an optional function that is executed before the repeat-loop begins, and f is
-           called repeatedly with its output
+  F must cope with two args, the result of the given init function (defaults to nil)
+  and a tick-number.
+    :init-fn names an optional function that is executed before the repeat-loop 
+             begins, and f is called repeatedly with its output
     :name is the name of the created thread"
   [f times-per-second
    :init-fn nil
-   :name (gensym "background-periodically-")]
+   :name (gensym "background-periodically-")
+   :use-ticks false]
   (let [period-nanos (/ (.toNanos (timeunit :sec) 1) times-per-second)
         tu (timeunit :nano)]
     (background (fn [] (let [init-val (if init-fn (init-fn))]
-                         (loop [start (System/nanoTime)]
-                           (if init-fn (f init-val) (f))
-                           (if (thread-sleep tu (or (positive? (- period-nanos (- (System/nanoTime) start))) 0)) 
-                             (recur (System/nanoTime))))))
+                         (loop [start (System/nanoTime)
+                                tick 0]
+                           (f init-val tick)                             
+                           (if (thread-sleep tu (max 0 (- period-nanos (- (System/nanoTime) start)))) 
+                             (recur (System/nanoTime) (inc tick))))))
                 name)))
 
 (defn in-background
@@ -155,5 +158,4 @@
   (.submit (.newSingleThreadExecutor Executors) #^java.util.concurrent.Callable f))
 
 
- 
 

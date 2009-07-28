@@ -129,29 +129,25 @@ x1,y1
   (print-method (.y vec2) w)
   (.write w ")"))
 
-;; jbox2d World is inherently thread-unsafe, it runs in its own
-;; background-game loop 60 times a second; 
-;; to inspect the state of simulated objects, we need a function to
-;; copy and return all the bodies within a AABB
-;; (axis-aligned-bounding-box)
+;; jbox2d World is thread-unsafe
+;; -> thread-confinement:
+;; world runs in its own thread and is accessed only from within this thread
 (defn start-world-thread
-  "... and return a function to add tasks to the world."
+  "... and return a map to add jobs to the world."
   [init-world-fn frequency]
-  (let [iterations 10
-        perodic-time (float (/ 1 frequency))
-        tasks (ConcurrentLinkedQueue.) ;; functions executed once
-        jobs (atom {}) ;; executed at every step
-        ]
-    (background-periodically (fn [world tick]
-                               ;;(.step world perodic-time iterations) ;; run the physics sim for 1/freq second
-                               (doseq [j (vals @jobs)]
-                                 (j world tick)) ;; for example observing world state every 2 frames
-                               (doseq [t (take-while identity (repeatedly #(.poll tasks)))]
-                                 (t world tick))) ;; run one-time tasks on this world, e.g. adding bodies
-                             frequency 
-                             :init-fn init-world-fn
-                             :name 'jbox-physics)
-    {;; add a task
-     :world-add-task (fn [task] (.add tasks task))
-     ;; map of jobs
-     :world-jobs jobs}))
+  (let [periodic-time (long (/ (.toNanos (timeunit :sec) 1) frequency));; in nanoseconds
+        tu (timeunit :nano)
+        jobs (atom {})] ;; functions executed at every step
+    (background
+     (fn [] (let [world (init-world-fn)
+                  state (java.util.HashMap.)] ;; mutable state, keep references to body etc.
+              (loop [start (System/nanoTime)
+                     tick 0]
+                ;; execute all jobs
+                (doseq [j (vals @jobs)] (j world tick state))
+                ;; sleep the remaining time or continue immediately
+                (if (thread-sleep tu (max 0 (- periodic-time (- (System/nanoTime) start))))
+                  (recur (System/nanoTime) (inc tick))))))
+     'jbox-physics)
+    ;; map of jobs
+    jobs))

@@ -15,29 +15,35 @@
 (def draw empty-draw)
 
 ;; sample applet implementation
-(defn make-applet []
-  (proxy [PApplet] []
+(defn- make-applet [opts]
+  (proxy [PApplet] [] ;; processing.core.PApplet
     (setup [] ;; default setup method
            (binding [*applet* this]
-             ;(let [parent-size (.getSize (.getParent this))]
-             ;  (size (.width parent-size) (.height parent-size) P3D))
+             ;; doesn't work:
+             ;;(let [parent-size (.getSize (.getParent this))]
+             ;;  (size (.width parent-size) (.height parent-size) P3D))
 
              ;; initial size, P3D is the (fast) renderer
-             (size 320 200 P3D)
-             (smooth)
+             (let [[hsize vsize] (:size opts)]
+               (size hsize vsize P3D))
+
+             ;; anti-aliasing
+             (if (:smooth opts) (smooth))
              (no-stroke)
              (fill 0)
-             (framerate 30)))
+             (framerate (:framerate opts))))
     (draw [] ;; default draw method
           (binding [*applet* this]
             (draw)))))
 
-
 (defnk setup-processing
-  "Create a swing Frame, run a processing.core.PApplet applet
-  inside and return the created frame."
-  [applet :size [200 200] :smooth true]
-  (let [[width height] size
+  "Create a swing Frame, create a processing.core.PApplet applet
+  inside and return the created objects [applet, frame]."
+  [:size [200 200] :smooth true :framerate 30]
+  (let [applet (make-applet {:smooth smooth
+                             :size size
+                             :framerate framerate})
+        [width height] size
         swing-frame (JFrame. "cljtest")]
     (.init applet)
     (doto swing-frame
@@ -46,7 +52,7 @@
       (.add applet)
       (.pack)
       (.setVisible true))
-    swing-frame))
+    [swing-frame applet]))
 
 
   ;(fill 226)
@@ -58,5 +64,18 @@
   ;(no-stroke)
   ;(filter-kind INVERT)
 
+;; methods to overwrite in PApplet
+(def processing-methods
+     '{setup "setup"
+       draw "draw"
 
+       key-pressed "keyPressed"
+       key-released "keyReleased"
+       key-typed "keyTyped"
+
+       mouse-clicked "mouseClicked"
+       mouse-dragged "mouseDragged"
+       mouse-moved "mouseMoved"
+       mouse-pressed "mousePressed"
+       mouse-released "mouseReleased"})
 

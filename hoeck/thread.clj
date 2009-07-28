@@ -144,10 +144,11 @@
    :use-ticks false]
   (let [period-nanos (/ (.toNanos (timeunit :sec) 1) times-per-second)
         tu (timeunit :nano)]
-    (background (fn [] (let [init-val (if init-fn (init-fn))]
+    (background (fn [] (let [init-val (if init-fn (init-fn))
+                             state 'mutable-state]
                          (loop [start (System/nanoTime)
                                 tick 0]
-                           (f init-val tick)                             
+                           (f init-val tick state)
                            (if (thread-sleep tu (max 0 (- period-nanos (- (System/nanoTime) start)))) 
                              (recur (System/nanoTime) (inc tick))))))
                 name)))

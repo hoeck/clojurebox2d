@@ -2,9 +2,9 @@
 (ns hoeck.clojurebox2d
   (:use hoeck.clojurebox2d.processing
         hoeck.thread
+        hoeck.iterate
         rosado.processing
-        clojure.contrib.pprint
-        clojure.contrib.except)
+        (clojure.contrib pprint except def))
   (:require [hoeck.clojurebox2d.jbox2d :as jbox])
   (:import (processing.core PApplet)
 
@@ -15,45 +15,11 @@
            (java.util.concurrent ArrayBlockingQueue ConcurrentLinkedQueue)))
 
 ;; clojurebox environment
+
 (def cbox {:world-jobs nil;; atom map of [name fn], called each step with the current step number
            :frame nil;; the JFrame containing the PApplet
            :applet nil;; PApplet processing environment
-           :camera (atom [[0 0] 1]);; [offset from center, scale], use set-pos and set-zoom
            })
-
-;; camera control
-
-(defn set-zoom [zoom]
-  (swap! (:camera cbox) assoc 1 zoom))
-
-(defn set-pos [x y]
-  (swap! (:camera cbox) assoc 0 [x y]))
-
-;; processing hooks
-
-(defn set-processing
-  "Set the processing.core.PApplet method name to f.
-  F is always called with the current applet as the only argument.
-  Preferably use (processing-fn ..) instead of `fn' to create those functions.
-  See `processing-methods' for valid names, e.g.:
-    `draw' .. called each frame, to draw sth on the screen
-    `key-(pressed, relased, typed)' .. called on key events
-    `mouse-(clicked, pressed, dragged, released)' .. called on mouse events" 
-  [name f]
-  (let [method-name (processing-methods name)
-        applet (:applet cbox)]
-    (if applet
-      (.__updateClojureFnMappings applet {method-name f})
-      (throwf "Processing not initialized! (:applet cbox) is nil"))))
-
-(defmacro processing-fn
-  "creates a function which takes an argument (the applet) and binds that
-  to *applet* before executing body.
-  (the rosado.processing functions need *applet*)"
-  [& body]
-  `(fn [applet#] 
-     (binding [*applet* applet#]
-       ~@body)))
 
 (defmacro with-applet
   "Evaluate body with *applet* bound to the current PApplet
@@ -64,6 +30,7 @@
 
 ;; default window events
 
+(declare redef)
 (defn window-closing
   "Called when the clojurebox frame is about to be closed."
   []
@@ -71,17 +38,13 @@
   ;; stop the physhics sim and processing
   (println "WINDOW CLOSING!!!")
   (interrupt 'jbox-physics)
-  (set-processing 'draw (processing-fn (.stop *applet*))))
+  (redef draw (.stop *applet*)))
 
 (defn window-resized
   "Called when the clojurebox frame is resized."
-  []
-  (let [dimension (.getSize (:frame cbox))
-        width (. dimension width)
-        height (. dimension height)]
-    (set-pos (int (/ width 2))
-             (int (/ height 2)))))
+  [])
 
+(declare add-job add-task run-world-tasks)
 (defn init
   "initialize clojurebox2d.
   Start processing and create dedicated jbox2d thread."
@@ -94,16 +57,21 @@
                #(jbox/create-world)
                physics-frames)]
     (.addWindowListener frm (proxy [WindowAdapter] []
-                              (windowClosing [e] (window-closing))))
+                              (windowClosing [e] (with-applet (window-closing)))))
     (.addComponentListener frm (proxy [ComponentListener] []
-                                 (componentResized [e] (window-resized))
+                                 (componentResized [e] (with-applet (window-resized)))
                                  (componentMoved [e])
                                  (componentHidden [e])
                                  (componentShown [e])))
-    (dosync (alter-var-root #'cbox merge
-                            {:world-jobs wjobs
-                             :frame frm
-                             :applet app}))))
+    (alter-var-root #'cbox merge
+                    {:world-jobs wjobs
+                     :frame frm
+                     :applet app})
+    ;; post-init
+
+    ;; makes the with-world thingy work
+    (add-job 'run-tasks run-world-tasks))) 
+    
 
 ;; job control
 
@@ -117,73 +85,84 @@
 (defn list-jobs []
   (keys @(:world-jobs cbox)))
 
-;; objects
+;; jbox objects
 
-(defn get-shapes
+(defn query
+  ([world] 
+     (query world (.getWorldAABB world)))
+  ([world x0 y0 x1 y1]
+     (query world (jbox/make-aabb x0 y0 x1 y1)))
+  ([world aabb]
+     (.query world aabb (.getBodyCount world))))
+
+(defn get-shapes ;; OBSOLETE
   "Return an array of jbox2d Shapes."
   ([world]
      (get-shapes world (.getWorldAABB world)))
+  ([world x0 y0 x1 y1] (get-shapes world (jbox/make-aabb x0 y0 x1 y1)))
   ([world aabb]
      (.query world aabb (.getBodyCount world))))
 
 (defn get-shape-points
-  "given a shape, return a seq of its shape corners 
+  "given a polygon-like shape, return a seq of its shape corners
   in world-coordinates."
-  [shape] ;; for simple shapes
-  (let [verts (.getVertices shape) ;;(.getShapeList shape)
-        body (.getBody shape)]
-    (map #(.getWorldPoint body %) verts)))
+  [shape] ;; for polygon shapes only!
+  (iter (let body (.getBody shape))
+        (for vert in-array (.getVertices shape))
+        (collect (.getWorldPoint body vert))))
 
 (defn clear-world
   "remove all objects from world"
   [world]
-  (doseq [b (map #(.getBody %) (get-shapes world))]
-    (.destroyBody world b)))
+  (iter (for s call .next on (query world))
+        (do (.destroyBody world (.getBody s))
+            (recur))))
+
+;; body-userdata
+
+(defstruct body-userdata-struct :name :draw-fn)
+
+(defmacro body-userdata
+  "Expand to code which calls the function f with the 
+  bodys userdata (a structmap) and any given additional args.
+  If no function is given, just return the bodys userdata."
+  ([body] `(.getUserData ~body))
+  ([body f] `(-> ~body .getUserData ~f))
+  ([body f & args] `(-> ~body .getUserData (~f ~@args))))
+
+(defmacro make-body-userdata [name]
+  `(struct body-userdata-struct ~name))
+
+(defmacro alter-body-userdata [body f & args]
+  `(.setUserData ~body (body-userdata ~body ~f ~@args)))
 
 ;; jbox objects -> clojure datastructures
 (defn query-world
-  "Return a seq of vectors: [body-name, [shape-points*-clockwise]]."
-  [world]
-  (doall
-   (map 
-    ;; [name, [points*-clockwise]]
-    #(vector 
-      (-> % .getBody .getUserData)
-      (get-shape-points %))
-    (get-shapes world))))
+  "Return a seq of bodies mapped with the given function f.
+  x0 .. y1 denote corners of an axis-aligned bounding box to select
+  only a subset of bodies."
+  ([world f]
+     (query-world world f (.getWorldAABB world)))
+  ([world f x0 y0 x1 y1]
+     (query-world world f (jbox/make-aabb x0 y0 x1 y1)))
+  ([world f aabb]
+     (doall (map f (get-shapes world aabb)))))
 
-;; processing
-
-(defn wire-draw
-  "Draws all body shapes (only boxes for now) using quad."
-  [points-vec]
-  (let [[offset, zoom] @(:camera cbox)]
-    (translate offset)
-    (scale zoom)
-    (doseq [[v1 v2 v3 v4] points-vec] ;; assume boxes      
-      (quad (.x v1) (.y v1)
-            (.x v2) (.y v2)
-            (.x v3) (.y v3)
-            (.x v4) (.y v4)))))
-
-
-;; world-state-writer job
-
-(def world-bodies (atom []))
-
-(defn write-world-state [world tick state]
-  ;; every 2 ticks
-  (if (even? tick)
-    (let [clojure-body-definitions (query-world world)]
-      (swap! world-bodies (constantly clojure-body-definitions)))))
+(defn query-world-bodies
+  "Return a seq of jbox bodies inside the specified AABB. See query-world
+  for aabb-def."
+  ([world & aabb-def]     
+     (apply query-world world #(-> % .getBody) aabb-def)))
 
 ;; world step job
 
-(def step-ptime (/ 1 60)) ;; slow-motion, 60 is normal
+(def step-ptime (atom (/ 1 60)));; slow-motion, 60 is normal
 
 (defn step-world [world tick state]
   ;; ptime, iterations
-  (.step world step-ptime 10))
+  (let [t @step-ptime]
+    (if (< 0 t)
+      (.step world t 10))))
   
 ;; world task job
 
@@ -192,7 +171,9 @@
 (defn add-task [task-fn] (.add world-tasks task-fn))
 
 (defn run-world-tasks
-  "A job to run one-time tasks on world, e.g. adding bodies."
+  "A job to run one-time tasks on world, e.g. adding bodies.
+  Use the with-world macro to safely execute tasks within the
+  world thread."
   [world tick state]
   (doseq [t (take-while identity (repeatedly #(.poll world-tasks)))]
     (t world tick state)))
@@ -223,57 +204,47 @@
   [& body]
   `(with-world* (fn [~'world ~'tick ~'state] ~@body)))
 
+;; set hooks into the various places of clojurebox
+(def cljbox-hook-vars {'window-resized `window-resized,
+                       'window-closing `window-closing})
 
-(defn example []
+(defn redef*
+  {:doc (str "Use f as the new definition of the function name." \newline
+             "  Redefinable functions include:" \newline
+             (apply str (map #(str "    " % \newline) (keys processing-methods))) \newline
+             "  for processing and " \newline
+             (apply str (map #(str "    " % \newline) (keys cljbox-hook-vars))) \newline
+             "  for clojurebox2d hooks.")}
+  [hook-name f]
+  (if-let [full-name (or (processing-methods hook-name) (cljbox-hook-vars hook-name))]
+    (do (println "redefining:" full-name)
+        (alter-var-root (resolve full-name) (constantly f)))
+    (throwf "Unknown place: %s" hook-name)))
 
-  ;; test run
-  (init)
-  (add-job 'run-tasks run-world-tasks)
 
-  ;; add some test objects
-  (with-world 
-    (jbox/make-body world 'ground
-                    {:shape [10 1]
-                     :pos [0 0]
-                     :dynamic false}))
 
-  (with-world
-    (jbox/make-body world 'box1
-                    {:shape [1 1]
-                     :pos [0 -10]
-                     :dynamic true})
-    (jbox/make-body world 'box2
-                    {:shape [0.5 0.5]
-                     :pos [0.8 -5]
-                     :dynamic true})
-    (jbox/make-body world 'box3
-                    {:shape [1 0.5]
-                     :pos [0.2 -2]
-                     :dynamic true}))
-  
-  ;; setting camera
-  (set-zoom 7)
-  ;;(set-pos 150 150) -> set by window-resized
-  
-  ;; adding the draw function  
-  (set-processing 'draw
-                  (processing-fn
-                    (stroke-float 0)
-                    (fill 255)
-                    (background-int 255)
-                    (wire-draw (map second @world-bodies))))
-  
-  ;; add job: observing jbox objects
-  (add-job 'write-state write-world-state)
+(defmacro redef
+  "Redefine a (usually) argless hook-function. See (doc redef*) for
+  possible functions. Processing functions are usually executed within the
+  processing thread and a bound *applet*."
+  [name & body]
+  `(redef* '~name (fn [] ~@body)))
 
-  ;; add job: stepping the jbox engine
-  ;; this actually starts the simulation
-  (add-job 'step step-world)
-  
-  ;; watch :)
-  
-  ;; finally, remove all objects form world
-  (comment (with-world (clear-world world))))
+(defn make-body 
+  [world name args]
+  (jbox/make-body world 
+                  (make-body-userdata name)
+                  args))
 
+(defalias make-aabb jbox/make-aabb)
+(defalias vec2 jbox/vec2)
+(defalias make-mass jbox/make-mass)
 
 (println "clojurebox2d")
+
+
+
+
+
+
+

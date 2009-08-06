@@ -6,7 +6,8 @@
   (:use (clojure.contrib pprint def)
         hoeck.thread)
   (:import (org.jbox2d.common Color3f Settings Vec2)
-           (org.jbox2d.collision PolygonDef CircleDef ContactID Shape AABB)
+           (org.jbox2d.collision PolygonDef CircleDef ContactID Shape AABB
+                                 MassData)
            (org.jbox2d.dynamics Body BodyDef BoundaryListener ContactListener
                                 DebugDraw DestructionListener World)
            (org.jbox2d.dynamics.contacts ContactResult)
@@ -19,7 +20,7 @@
   [& messages]
   (throw (UnsupportedOperationException. (apply str messages))))
 
-(defn illegal-argument! 
+(defn illegal-argument!
   "throw a java.lang.IllegalArgumentException with messages as text."
   [& messages]
   (throw (IllegalArgumentException. (apply str messages))))
@@ -93,14 +94,26 @@ x1,y1
   See make-shape-def and make-body-def for valid arg-keys.
   additionally:
     :dynamic true/false  when false, make an unsimulated (ground) body."
-  ([world name args]
+  ([world userdata args]
      (let [sd (make-shape-def args)
            bd (make-body-def sd args)
            body (.createBody world bd)]
        (.createShape body sd)
        (if (:dynamic args true) (.setMassFromShapes body))
-       (.setUserData body name)
+       (.setUserData body userdata)
        body)))
+
+(defn make-mass
+  "Creates a jbox2d MassData object from the given mass and inertia.
+  The position, a vector describing an offset from the bodys center
+  defaults to [0 0]."
+  ([mass inertia] (make-mass mass inertia [0 0]))
+  ([mass inertia pos]
+     (let [md (MassData.)]
+       (set! (. md center) (vec2 pos))
+       (set! (. md I) inertia)
+       (set! (. md mass) mass)
+       md)))
 
 ;(def body (make-box (:world cbox) {:pos [5 5] :shape [0.5 0.5]}))
 

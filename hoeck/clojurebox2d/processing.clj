@@ -9,32 +9,74 @@
            (processing.core PApplet)))
 
 ;; sample draw function
-(defn empty-draw []
-  (fill 0))
 
-(def draw empty-draw)
+(defn draw [] (fill 255)) ;; white
+
+(defmacro with-applet 
+  {:private true}
+  [& body]
+  `(binding [*applet* ~'this] ~@body))
+
+;; event-hooks
+
+(def key-pressed #())
+(def key-released #())
+(def key-typed #())
+
+(def mouse-clicked #())
+(def mouse-pressed #())
+(def mouse-moved #())
+(def mouse-released #())
+(def mouse-dragged #())
 
 ;; sample applet implementation
 (defn- make-applet [opts]
   (proxy [PApplet] [] ;; processing.core.PApplet
     (setup [] ;; default setup method
-           (binding [*applet* this]
-             ;; doesn't work:
-             ;;(let [parent-size (.getSize (.getParent this))]
-             ;;  (size (.width parent-size) (.height parent-size) P3D))
+           (with-applet
+            ;; doesn't work:
+            ;;(let [parent-size (.getSize (.getParent this))]
+            ;;  (size (.width parent-size) (.height parent-size) P3D))
 
-             ;; initial size, P3D is the (fast) renderer
-             (let [[hsize vsize] (:size opts)]
-               (size hsize vsize P3D))
+            ;; initial size, P3D is the (fast) renderer
+            (let [[hsize vsize] (:size opts)]
+              (size hsize vsize P3D))
 
-             ;; anti-aliasing
-             (if (:smooth opts) (smooth))
-             (no-stroke)
-             (fill 0)
-             (framerate (:framerate opts))))
+            ;; anti-aliasing
+            (if (:smooth opts) (smooth))
+            (no-stroke)
+            (fill 0)
+            (framerate (:framerate opts))))
     (draw [] ;; default draw method
-          (binding [*applet* this]
-            (draw)))))
+          (with-applet (draw)))
+    
+    ;; for each input-event, call the supermethod and only
+    ;; implement the eventmethod with no args
+    ;; -> to keep processing eventhandling working
+    
+    (keyPressed ([] (with-applet (key-pressed)))
+                ([e] (proxy-super keyPressed)))
+
+    (keyReleased ([] (with-applet (key-released)))
+                 ([e] (proxy-super keyReleased)))
+
+    (keyTyped ([] (with-applet (key-typed)))
+              ([e] (proxy-super keyTyped)))
+
+    (mousePressed ([] (with-applet (mouse-pressed)))
+                  ([e] (proxy-super mousePressed e)))
+
+    (mouseReleased ([] (with-applet (mouse-released)))
+                  ([e] (proxy-super mouseReleased e)))
+
+    (mouseClicked ([] (with-applet (mouse-clicked)))
+                  ([e] (proxy-super mouseClicked e)))
+    
+    (mouseDragged ([] (with-applet (mouse-dragged)))
+                  ([e] (proxy-super mouseDragged e)))
+    
+    (mouseMoved ([] (with-applet (mouse-moved)))
+                ([e] (proxy-super mouseMoved e)))))
 
 (defnk setup-processing
   "Create a swing Frame, create a processing.core.PApplet applet
@@ -54,7 +96,6 @@
       (.setVisible true))
     [swing-frame applet]))
 
-
   ;(fill 226)
   ;(background-float 0 0 0)
   ;(fill-float (rand-int 125) (rand-int 125) (rand-int 125))
@@ -66,16 +107,20 @@
 
 ;; methods to overwrite in PApplet
 (def processing-methods
-     '{setup "setup"
-       draw "draw"
+     {'setup `setup
+      'draw `draw
+      
+      'key-pressed `key-pressed
+      'key-released `key-released
+      'key-typed `key-typed
+      
+      'mouse-clicked `mouse-clicked
+      'mouse-dragged `mouse-dragged
+      'mouse-moved `mouse-moved
+      'mouse-pressed `mouse-pressed
+      'mouse-released `mouse-released})
 
-       key-pressed "keyPressed"
-       key-released "keyReleased"
-       key-typed "keyTyped"
 
-       mouse-clicked "mouseClicked"
-       mouse-dragged "mouseDragged"
-       mouse-moved "mouseMoved"
-       mouse-pressed "mousePressed"
-       mouse-released "mouseReleased"})
+
+
 

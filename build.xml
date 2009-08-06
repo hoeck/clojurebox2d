@@ -1,0 +1,56 @@
+<project name="rel" default="jar">
+
+    <description>
+       Copy or link the clj-processing sourced clojure.jar and clojure-contrib.jar
+       into the deps directory.
+       To develop, put classes and . into your classpath.
+       Build with "ant".
+    </description>
+
+    <property name="src.dir" location="."/>
+    <property name="classes.dir" location="classes"/>
+    <property name="deps" location="deps"/>
+
+    <property name="jar.file" location="clojurebox2d.jar"/>
+
+    <target name="init" description="create build directories">
+        <tstamp/>
+        <mkdir dir="${classes.dir}"/>
+    </target>
+    
+    <target name="gen-classes" 
+            depends="init"
+            description="generate classes">
+        <java classname="clojure.lang.Compile">
+            <classpath>
+                <path location="${classes.dir}"/>
+                <path location="${src.dir}"/>
+                <path location="${deps.dir}"/>
+                <fileset dir="${deps}">
+                  <include name="**/*.jar"/>
+                </fileset>
+            </classpath>
+            <sysproperty key="clojure.compile.path" value="${classes.dir}"/>
+            <arg value="hoeck.clojurebox2d.processing.PApplet"/>
+        </java>
+    </target>
+
+    <target name="jar" depends="gen-classes"
+        description="create jar including the clj sources and the custom classes">
+        <jar jarfile="${jar.file}">
+            <fileset file="README.txt"/>
+            <fileset file="LICENSE.txt"/>
+            <fileset dir="${classes.dir}" includes="hoeck/clojurebox2d/processing/PApplet*"/>
+            <fileset dir="${src.dir}" includes="**/*.clj"/>
+            <manifest>
+                <attribute name="Class-Path" value="."/>
+            </manifest>
+        </jar>
+    </target>
+
+    <target name="clean" description="clean generated files (jar and classes)">
+        <delete dir="${classes.dir}"/>
+        <delete file="${jar.file}"/>
+    </target>
+
+</project>

@@ -26,8 +26,11 @@
   (throw (IllegalArgumentException. (apply str messages))))
 
 (defn vec2
-  "Make a org.jbox2d.common.Vec2 from a clojure vector or two numbers."
-  ([v] (Vec2. (v 0) (v 1)))
+  "Make a org.jbox2d.common.Vec2 from a clojure vector or two numbers.
+  If v is already a Vec2, just return it."
+  ([v] (if (isa? (class v) Vec2)
+         v
+         (Vec2. (v 0) (v 1))))
   ([x y] (Vec2. x y)))
 
 (defn make-aabb

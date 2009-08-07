@@ -1,6 +1,7 @@
 
 (ns hoeck.clojurebox2d.example
   (:use hoeck.clojurebox2d
+        hoeck.iterate
         rosado.processing
         clojure.contrib.pprint))
 
@@ -28,17 +29,25 @@
 (def world-state (atom []))
 
 (defn write-world-state [world tick state]
-  ;; every 2 ticks
-  (if (even? tick)
-    (let [;;clojure-body-definitions (query-world world jbox->clojurebox)
-          clojure-body-definitions (iter (for shape call .next on (query world))
+  (if (even? tick) ;; every 2 ticks
+    (let [clojure-body-definitions (iter (for shape in-array (query world))
                                          (collect (jbox->clojurebox shape)))]
       (swap! world-state (constantly clojure-body-definitions)))))
 
+(comment (with-world (iter (for shape in-array (query world))
+                           (collect (jbox->clojurebox shape)))))
+
+;;   comparison: iter vs. plain loop
+;;
 ;;(iter (for shape call .next on (query world)) (collect (jbox->clojurebox shape)))
 ;;(loop [shape (query world) bodies []] (if shape (recur (.next shape) (conj bodies (jbox->clojurebox shape))) bodies))
-
-;; drawing
+;;
+;; iter: 81 chars (70%)
+;;       2 levels of nesting
+;;       1 temporary binding: shape
+;; loop: 117 chars (144%)
+;;       2 levels of nesting
+;;       2 tmp bindings: shape, bodies
 
 (defn draw-background []
   (background-int 255))
@@ -112,7 +121,7 @@
                 :dynamic true}))
 
   ;; setting camera
-  (set-my-camera-zoom 14)
+  (set-my-camera-zoom 13)
   ;;(set-pos 150 150) -> set by window-resized
   
   ;; adding the draw function  
@@ -158,13 +167,14 @@
       ;; always select the first body
       (let [b (iter (let w (vec2 wx wy))
                     (let d (vec2 0.1 0.1))
-                    (for shape call .next on (query world (.sub w d) (.add w d)))
+                    (for shape in-array (query world (.sub w d) (.add w d)))
                     (for body as (.getBody shape))
                     (return-if (and (not (.isStatic body))
                                     (.testPoint shape (.getXForm body) w))
-                               body))])
-      (if-let [h (first select-hook)] (h b state))
-      (if b (body-userdata b :name)))))
+                               body))]
+        (if-let [h (first select-hook)] (h b state))
+        (if b (body-userdata b :name))))))
+
 
 (defn highlight-and-store-one-selected-body [body state]
   (if-let [old-body (.get state :selected-body)]
@@ -202,5 +212,5 @@
         (println :body-moved x y)
         (.setXForm b
                    (hoeck.clojurebox2d.jbox2d/vec2 x y)
-                   0)))))
+                   (-> b .getAngle))))))
 

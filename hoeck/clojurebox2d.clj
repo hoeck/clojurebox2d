@@ -88,8 +88,12 @@
 ;; jbox objects
 
 (defn query
+  "Return an array of shapes which potentially overlap with the given aabb.
+  aabb defaults to the world aabb."
   ([world] 
      (query world (.getWorldAABB world)))
+  ([world v0 v1]
+     (query world (jbox/make-aabb v0 v1)))
   ([world x0 y0 x1 y1]
      (query world (jbox/make-aabb x0 y0 x1 y1)))
   ([world aabb]
@@ -99,7 +103,10 @@
   "Return an array of jbox2d Shapes."
   ([world]
      (get-shapes world (.getWorldAABB world)))
-  ([world x0 y0 x1 y1] (get-shapes world (jbox/make-aabb x0 y0 x1 y1)))
+  ([world v0 v1]
+     (get-shapes world (jbox/make-aabb v0 v1)))
+  ([world x0 y0 x1 y1]
+     (get-shapes world (jbox/make-aabb x0 y0 x1 y1)))  
   ([world aabb]
      (.query world aabb (.getBodyCount world))))
 
@@ -187,7 +194,9 @@
   [f]
   (let [result-queue (java.util.concurrent.ArrayBlockingQueue. 1)]
     (add-task (fn [world tick state]
-                (let [task-result (try (f world tick state) (catch Exception e e))] ;; don't interrupt the world thread
+                (let [task-result (try (f world tick state)
+                                       ;; don't interrupt the world thread
+                                       (catch Exception e e))]
                   (if (isa? (class task-result) Exception)
                     (.add result-queue task-result)
                     (.add result-queue [task-result]))))) ;; wrap result in vector, to be able to return nil

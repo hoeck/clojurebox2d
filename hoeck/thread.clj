@@ -105,7 +105,7 @@
   return true if thread sleep is complete, return false if thread
   was interrupted before or gets interrupted while sleeping."
   ([milliseconds] (thread-sleep (timeunit :milli) milliseconds))
-  ([timeunit amount]
+  ([#^TimeUnit timeunit amount]
      (and (not (interrupted?))
           (try (.sleep timeunit amount)
                true
@@ -118,7 +118,7 @@
 (defn background
   "Run function f in a Thread in the background and ignore its result."
   ([f] (background f (gensym "background-")))
-  ([f name] (.start (new Thread f (str name)))))
+  ([f name] (.start (new Thread #^Runnable f #^String (str name)))))
 
 (defn background-repeatedly
   "call function f repeatedly. take time milliseconds sleep between 2 calls to f."
@@ -142,7 +142,7 @@
    :init-fn nil
    :name (gensym "background-periodically-")
    :use-ticks false]
-  (let [period-nanos (/ (.toNanos (timeunit :sec) 1) times-per-second)
+  (let [period-nanos (/ (.toNanos #^TimeUnit (timeunit :sec) 1) times-per-second)
         tu (timeunit :nano)]
     (background (fn [] (let [init-val (if init-fn (init-fn))
                              state 'mutable-state]

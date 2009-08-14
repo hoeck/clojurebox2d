@@ -12,7 +12,10 @@
                            ComponentListener)
            (javax.swing JFrame JLabel JTextField JButton)
            
-           (java.util.concurrent ArrayBlockingQueue ConcurrentLinkedQueue)))
+           (java.util.concurrent ArrayBlockingQueue ConcurrentLinkedQueue)
+           
+           (org.jbox2d.collision Shape PolygonShape CircleShape)
+           (org.jbox2d.dynamics Body World)))
 
 ;; clojurebox environment
 
@@ -48,29 +51,30 @@
 (defn init
   "initialize clojurebox2d.
   Start processing and create dedicated jbox2d thread."
-  []
-  (let [physics-frames 60.0
-        render-frames 25.0
-        ;; creates its own render thread, returns the frame and applet:
-        [frm app] (setup-processing :size [320 200])
-        wjobs (jbox/start-world-thread
-               #(jbox/create-world)
-               physics-frames)]
-    (.addWindowListener frm (proxy [WindowAdapter] []
-                              (windowClosing [e] (with-applet (window-closing)))))
-    (.addComponentListener frm (proxy [ComponentListener] []
-                                 (componentResized [e] (with-applet (window-resized)))
-                                 (componentMoved [e])
-                                 (componentHidden [e])
-                                 (componentShown [e])))
-    (alter-var-root #'cbox merge
-                    {:world-jobs wjobs
-                     :frame frm
-                     :applet app})
-    ;; post-init
+  ([] (init {}))
+  ([opts-map]
+     (let [physics-frames 60.0
+           render-frames 30.0
+           ;; creates its own render thread, returns the frame and applet:
+           [frm app] (setup-processing :size [320 200])
+           wjobs (jbox/start-world-thread
+                  #(jbox/create-world opts-map)
+                  physics-frames)]
+       (.addWindowListener frm (proxy [WindowAdapter] []
+                                 (windowClosing [e] (with-applet (window-closing)))))
+       (.addComponentListener frm (proxy [ComponentListener] []
+                                    (componentResized [e] (with-applet (window-resized)))
+                                    (componentMoved [e])
+                                    (componentHidden [e])
+                                    (componentShown [e])))
+       (alter-var-root #'cbox merge
+                       {:world-jobs wjobs
+                        :frame frm
+                        :applet app})
+       ;; post-init
 
-    ;; makes the with-world thingy work
-    (add-job 'run-tasks run-world-tasks))) 
+       ;; makes the with-world thingy work
+       (add-job 'run-tasks run-world-tasks)))) 
     
 
 ;; job control
@@ -82,6 +86,9 @@
 (defn remove-job [name]
   (swap! (:world-jobs cbox) dissoc name))
 
+(defn remove-all-jobs []
+  (swap! (:world-jobs cbox) (constantly {})))
+
 (defn list-jobs []
   (keys @(:world-jobs cbox)))
 
@@ -90,44 +97,51 @@
 (defn query
   "Return an array of shapes which potentially overlap with the given aabb.
   aabb defaults to the world aabb."
-  ([world] 
+  ([#^World world] 
      (query world (.getWorldAABB world)))
   ([world v0 v1]
      (query world (jbox/make-aabb v0 v1)))
   ([world x0 y0 x1 y1]
      (query world (jbox/make-aabb x0 y0 x1 y1)))
-  ([world aabb]
+  ([#^World world aabb]
      (.query world aabb (.getBodyCount world))))
 
 (defn get-shapes ;; OBSOLETE
   "Return an array of jbox2d Shapes."
-  ([world]
+  ([#^World world]
      (get-shapes world (.getWorldAABB world)))
   ([world v0 v1]
      (get-shapes world (jbox/make-aabb v0 v1)))
   ([world x0 y0 x1 y1]
      (get-shapes world (jbox/make-aabb x0 y0 x1 y1)))  
-  ([world aabb]
+  ([#^World world aabb]
      (.query world aabb (.getBodyCount world))))
 
 (defn get-shape-points
-  "given a polygon-like shape, return a seq of its shape corners
+  "given a polygon shape, return a seq of its shape corners
   in world-coordinates."
-  [shape] ;; for polygon shapes only!
-  (iter (let body (.getBody shape))
+  [#^PolygonShape shape] ;; for polygon shapes only!
+  (iter (let #^Body body (.getBody shape))
         (for vert in-array (.getVertices shape))
-        (collect (.getWorldPoint body vert))))
+        (collect (jbox/vec2->clj (.getWorldPoint body vert)))))
+
+(defn get-circle-points
+  "Given a circle shape, return its center in world coordinates and
+  its radius: [center, radius]"
+  [#^CircleShape shape]
+  (vector (jbox/vec2->clj (.getWorldPoint (.getBody shape) (.getLocalPosition shape)))
+          (.getRadius shape)))
 
 (defn clear-world
   "remove all objects from world"
-  [world]
-  (iter (for s call .next on (query world))
-        (do (.destroyBody world (.getBody s))
+  [#^World world]
+  (iter (for b call .getNext on (.getBodyList world))
+        (do (.destroyBody world b)
             (recur))))
 
 ;; body-userdata
 
-(defstruct body-userdata-struct :name :draw-fn)
+(defstruct body-userdata-struct :name :draw-fn :box :circle)
 
 (defmacro body-userdata
   "Expand to code which calls the function f with the 
@@ -137,35 +151,17 @@
   ([body f] `(-> ~body .getUserData ~f))
   ([body f & args] `(-> ~body .getUserData (~f ~@args))))
 
-(defmacro make-body-userdata [name]
-  `(struct body-userdata-struct ~name))
+(defmacro make-body-userdata [& keyvals]
+  `(struct-map body-userdata-struct ~@keyvals))
 
 (defmacro alter-body-userdata [body f & args]
   `(.setUserData ~body (body-userdata ~body ~f ~@args)))
-
-;; jbox objects -> clojure datastructures
-(defn query-world
-  "Return a seq of bodies mapped with the given function f.
-  x0 .. y1 denote corners of an axis-aligned bounding box to select
-  only a subset of bodies."
-  ([world f]
-     (query-world world f (.getWorldAABB world)))
-  ([world f x0 y0 x1 y1]
-     (query-world world f (jbox/make-aabb x0 y0 x1 y1)))
-  ([world f aabb]
-     (doall (map f (get-shapes world aabb)))))
-
-(defn query-world-bodies
-  "Return a seq of jbox bodies inside the specified AABB. See query-world
-  for aabb-def."
-  ([world & aabb-def]     
-     (apply query-world world #(-> % .getBody) aabb-def)))
 
 ;; world step job
 
 (def step-ptime (atom (/ 1 60)));; slow-motion, 60 is normal
 
-(defn step-world [world tick state]
+(defn step-world [#^World world tick state]
   ;; ptime, iterations
   (let [t @step-ptime]
     (if (< 0 t)
@@ -182,7 +178,7 @@
   Use the with-world macro to safely execute tasks within the
   world thread."
   [world tick state]
-  (doseq [t (take-while identity (repeatedly #(.poll world-tasks)))]
+  (doseq [t (take-while identity (repeatedly #(.poll #^ConcurrentLinkedQueue world-tasks)))]
     (t world tick state)))
 
 (defn with-world*
@@ -239,21 +235,13 @@
   [name & body]
   `(redef* '~name (fn [] ~@body)))
 
-(defn make-body 
-  [world name args]
-  (jbox/make-body world 
-                  (make-body-userdata name)
-                  args))
-
+(defalias make-body jbox/make-body)
 (defalias make-aabb jbox/make-aabb)
 (defalias vec2 jbox/vec2)
+(defalias vec2->clj jbox/vec2->clj)
 (defalias make-mass jbox/make-mass)
 
 (println "clojurebox2d")
-
-
-
-
 
 
 

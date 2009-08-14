@@ -7,7 +7,7 @@
         hoeck.thread)
   (:import (org.jbox2d.common Color3f Settings Vec2)
            (org.jbox2d.collision PolygonDef CircleDef ContactID Shape AABB
-                                 MassData)
+                                 MassData ShapeDef)
            (org.jbox2d.dynamics Body BodyDef BoundaryListener ContactListener
                                 DebugDraw DestructionListener World)
            (org.jbox2d.dynamics.contacts ContactResult)
@@ -27,11 +27,15 @@
 
 (defn vec2
   "Make a org.jbox2d.common.Vec2 from a clojure vector or two numbers.
-  If v is already a Vec2, just return it."
+  If v is already a Vec2, return it."
   ([v] (if (isa? (class v) Vec2)
          v
          (Vec2. (v 0) (v 1))))
   ([x y] (Vec2. x y)))
+
+(defn vec2->clj
+  "Make a clojure vector from a jbox2d Vec2."
+  [#^Vec2 v] [(.x v) (.y v)])
 
 (defn make-aabb
   "Make a org.jbox2d.collision.AABB (axis-aligned-bounding-box) 
@@ -50,7 +54,7 @@ x1,y1
 ;; bodies & shapes
 
 (defn- get-shape-type [clojure-shape-def]
-  (cond (= (count clojure-shape-def) 1) :circle
+  (cond (not (vector? clojure-shape-def)) :circle
         (= (count clojure-shape-def) 2) :box
         :else :poly))
 
@@ -66,14 +70,21 @@ x1,y1
   [args]
   (let [{:keys [shape]} args
         shape-def (condp = (get-shape-type shape)
+                    :circle (let [cd (CircleDef.)]
+                              (set! (.radius cd) shape)
+                              cd)
                     :box (doto (PolygonDef.)
                            (.setAsBox (shape 0)
                                       (shape 1) 
                                       (vec2 (:center args [0 0]))
                                       (:angle args 0.0)))
+                    :poly (let [pd (PolygonDef.)]
+                            (doseq [v shape]
+                              (.addVertex pd (vec2 v)))
+                            pd)
                     (throw (unsupported-operation! "not implemented")))]
-    (set! (.density shape-def) (:density args 1.0))
-    (set! (.friction shape-def) (:friction args 0.3))
+    (set! (.density #^ShapeDef shape-def)  (:density args 1.0))
+    (set! (.friction #^ShapeDef shape-def) (:friction args 0.3))
     shape-def))
 
 (defn make-body-def
@@ -82,22 +93,26 @@ x1,y1
     :pos [x y]
     :angle 0
     :is-bullet false, allow for more perf, set true for fast-moving bodies
-    :allow-sleep true"
+    :allow-sleep true
+    :linear-damping 0.0
+    :angular-damping 0.0"
   [shape-def args]
   (let [{:keys [pos angle bullet allow-sleep]} args]
     (let [b (BodyDef.)]
       (-> b .position (.set (-> args :pos vec2)))
-      (set! (.isBullet b) (:bullet args false))
-      (set! (.allowSleep b) (:allow-sleep args true))
+      (set! (.angle b)          (:angle args 0))
+      (set! (.isBullet b)       (:bullet args false))
+      (set! (.allowSleep b)     (:allow-sleep args true))
+      (set! (.linearDamping b)  (:linear-damping args 0.0))
+      (set! (.angularDamping b) (:angular-damping args 0.0))
       b)))
 
 (defn make-body
-  "Create a body in the world using opts and put
-  name (keyword/symbol) in its user slot.
+  "Create a body in the world using opts and set the given userdata on it.
   See make-shape-def and make-body-def for valid arg-keys.
   additionally:
     :dynamic true/false  when false, make an unsimulated (ground) body."
-  ([world userdata args]
+  ([#^World world userdata args]
      (let [sd (make-shape-def args)
            bd (make-body-def sd args)
            body (.createBody world bd)]
@@ -123,10 +138,12 @@ x1,y1
 (defnk create-world
   "Create a jbox2d world using lower and upper to create the worlds
   AABB (see make-aabb)"
-  [:lower [-200.0 -100.0]
-   :upper [ 200.0  200.0]
-   :gravity [ 0.0  10.0]]
-  (let [aabb (AABB. (vec2 lower) (vec2 upper)) ;; axis-aligned-bounding-box
+  [opts]
+  (let [{:keys [upper lower gravity]
+         :or {lower [-200.0 -100.0]
+              upper [ 200.0  200.0]
+              gravity [ 0.0   10.0]}} opts
+        aabb (AABB. (vec2 lower) (vec2 upper)) ;; axis-aligned-bounding-box
         gravity (vec2 gravity)
         sleep true]
     (World. aabb gravity sleep)))

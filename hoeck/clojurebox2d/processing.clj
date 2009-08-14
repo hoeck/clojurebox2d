@@ -6,7 +6,7 @@
         (clojure.contrib pprint def))
   (:import (java.awt.event MouseWheelEvent MouseWheelListener WindowAdapter)
            (javax.swing JFrame JLabel JTextField JButton)
-           (processing.core PApplet)))
+           (processing.core PApplet PFont)))
 
 ;; sample draw function
 
@@ -16,6 +16,33 @@
   {:private true}
   [& body]
   `(binding [*applet* ~'this] ~@body))
+
+
+;; font tools
+
+(defn list-fonts
+  "returns a list of available fonts, optionally filters them with
+  regex (case-insensitive)."
+  ([] (seq (PFont/list)))
+  ([regex] (filter #(re-matches regex (.toLowerCase %))
+                   (PFont/list))))
+
+(defn pick-and-safe-font
+  "Pick a font and safe it to disk, for further use with processing load-font.
+  Return the name of the font or nil if no font was found.
+  Pick the first if more than one font matches regex."
+  [name-or-regex size smooth]
+  (let [fnt-name (if (string? name-or-regex)
+                   name-or-regex
+                   (first (list-fonts name-or-regex)))
+        papplet (PApplet.)
+        pfont (if fnt-name (.createFont papplet fnt-name size smooth))]
+    (when pfont
+      (with-open [s (java.io.FileOutputStream. (str fnt-name ".font"))]
+        (.save pfont s))
+      fnt-name)))
+
+(comment (pick-and-safe-font #".*free.*mono.*" 14 true))
 
 ;; event-hooks
 
@@ -29,39 +56,60 @@
 (def mouse-released #())
 (def mouse-dragged #())
 
+;; keystatus
+
+(def keystatus (atom #{})) ;; a set of keys currently pressed
+
+;; build a map of keycodes -> keykeywords using reflection
+(defn build-keycode-table []
+  (let [key-ev-fields (.getFields java.awt.event.KeyEvent)
+        codefields (filter #(.startsWith (.getName %) "VK") key-ev-fields)
+        keycodes (map #(.get % nil) codefields)
+        keynames (map #(-> % .getName (.substring 3) .toLowerCase keyword) codefields)]
+    (zipmap keycodes keynames)))
+
+(def keycodes (build-keycode-table))
+
 ;; sample applet implementation
 (defn- make-applet [opts]
   (proxy [PApplet] [] ;; processing.core.PApplet
     (setup [] ;; default setup method
            (with-applet
-            ;; doesn't work:
-            ;;(let [parent-size (.getSize (.getParent this))]
-            ;;  (size (.width parent-size) (.height parent-size) P3D))
+             ;; doesn't work:
+             ;;(let [parent-size (.getSize (.getParent this))]
+             ;;  (size (.width parent-size) (.height parent-size) P3D))
 
-            ;; initial size, P3D is the (fast) renderer
-            (let [[hsize vsize] (:size opts)]
-              (size hsize vsize P3D))
+             ;; initial size, P3D is the (fast) renderer
+             (let [[hsize vsize] (:size opts)]
+               (size hsize vsize P3D))
 
-            ;; anti-aliasing
-            (if (:smooth opts) (smooth))
-            (no-stroke)
-            (fill 0)
-            (framerate (:framerate opts))))
+             ;; anti-aliasing
+             (if (:smooth opts) (smooth))
+             (no-stroke)
+             (fill 0)
+             (framerate (:framerate opts))
+            
+             ;; default font             
+             (text-font (load-font "Free Monospaced.font"))))
     (draw [] ;; default draw method
           (with-applet (draw)))
     
     ;; for each input-event, call the supermethod and only
     ;; implement the eventmethod with no args
     ;; -> to keep processing eventhandling working
+    ;; for keypress & releases, update a keystatus set,
+    ;; (to be able to read keys from the physics or draw loop)
     
     (keyPressed ([] (with-applet (key-pressed)))
-                ([e] (proxy-super keyPressed)))
+                ([e] (swap! keystatus conj (keycodes (.getKeyCode e)))
+                     (proxy-super keyPressed e)))
 
     (keyReleased ([] (with-applet (key-released)))
-                 ([e] (proxy-super keyReleased)))
+                 ([e] (swap! keystatus disj (keycodes (.getKeyCode e)))
+                      (proxy-super keyReleased e)))
 
     (keyTyped ([] (with-applet (key-typed)))
-              ([e] (proxy-super keyTyped)))
+              ([e] (proxy-super keyTyped e)))
 
     (mousePressed ([] (with-applet (mouse-pressed)))
                   ([e] (proxy-super mousePressed e)))

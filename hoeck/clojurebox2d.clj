@@ -14,7 +14,7 @@
            
            (java.util.concurrent ArrayBlockingQueue ConcurrentLinkedQueue)
            
-           (org.jbox2d.collision Shape PolygonShape CircleShape)
+           (org.jbox2d.collision.shapes Shape PolygonShape CircleShape)
            (org.jbox2d.dynamics Body World)))
 
 ;; clojurebox environment

@@ -6,8 +6,9 @@
   (:use (clojure.contrib pprint def)
         hoeck.thread)
   (:import (org.jbox2d.common Color3f Settings Vec2)
-           (org.jbox2d.collision PolygonDef CircleDef ContactID Shape AABB
-                                 MassData ShapeDef)
+           (org.jbox2d.collision ContactID AABB
+                                 MassData)
+           (org.jbox2d.collision.shapes Shape PolygonDef CircleDef  ShapeDef)
            (org.jbox2d.dynamics Body BodyDef BoundaryListener ContactListener
                                 DebugDraw DestructionListener World)
            (org.jbox2d.dynamics.contacts ContactResult)
@@ -66,7 +67,8 @@ x1,y1
   :angle 0
   :center [0 0]
   :friction 0.3
-  :density 1.0"
+  :density 1.0
+  :restitution 0.3"
   [args]
   (let [{:keys [shape]} args
         shape-def (condp = (get-shape-type shape)
@@ -85,6 +87,7 @@ x1,y1
                     (throw (unsupported-operation! "not implemented")))]
     (set! (.density #^ShapeDef shape-def)  (:density args 1.0))
     (set! (.friction #^ShapeDef shape-def) (:friction args 0.3))
+    (set! (.restitution #^ShapeDef shape-def) (:restitution args 0.3))
     shape-def))
 
 (defn make-body-def

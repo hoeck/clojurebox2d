@@ -8,7 +8,7 @@
         hoeck.thread)
   (:import (java.util HashMap LinkedList ArrayDeque)
 
-           (org.jbox2d.collision Shape)
+           (org.jbox2d.collision.shapes Shape)
            (org.jbox2d.dynamics Body World ContactListener)
            (org.jbox2d.dynamics.contacts ContactPoint)))
 
@@ -29,7 +29,7 @@
   Return [name, [points*-clockwise] selected-p] from a body"
   [#^Shape shape]
   (let [body (.getBody shape)]
-    (vector (if (isa? (class shape) org.jbox2d.collision.PolygonShape) 
+    (vector (if (isa? (class shape) org.jbox2d.collision.shapes.PolygonShape) 
               (get-shape-points shape)
               ;; else: circleShape
               (get-circle-points shape))
@@ -111,7 +111,7 @@
     (draw-hp-bar :right (- 1 (/ hp2 (inc max-player-hitpoints))))))
 
 (defn draw-background []
-  (background-int 255)
+  (background-int 255)  
   (draw-osd))
 
 (defn my-draw
@@ -122,7 +122,7 @@
   ;; camera transformations
   (let [[offset, zoom] @my-camera]
     (translate offset)
-    (scale zoom))
+    (scale zoom))  
   ;; drawing bodies
   (doseq [[shape-data name draw-fn] world-state]
     (if draw-fn
@@ -130,13 +130,23 @@
    ;; need no zooming for fonts
   )
 
+
 ;; center the current world on resize
+;; adjust zoom so that the whole world fits in the frame
+(declare wrap-world-box)
+
 (redef window-resized
-  (let [dimension (.getSize #^javax.swing.JFrame (:frame cbox))
+  (let [[x0 y0 x1 y1] wrap-world-box
+        world-width (+ (Math/abs x0) x1)
+        world-height (+ (Math/abs y0) y1)
+        dimension (.getSize #^javax.swing.JFrame (:frame cbox))
         width (. dimension width)
-        height (. dimension height)]
+        height (. dimension height)
+        zoom (min (/ width world-width)
+                  (/ height world-height))]
     (set-my-camera-pos (int (/ width 2))
-                       (int (/ height 2)))))
+                       (int (/ height 2)))
+    (set-my-camera-zoom zoom)))
 
 ;; bodies
 
@@ -190,7 +200,7 @@
   (make-body world (make-body-userdata :name name
                                        :draw-fn draw-fn)
              (merge {:dynamic true
-                     :shape [[-1 -1.3] [1 -1.3] [0 1]]
+                     :shape [[-1.1 -1.5] [1.1 -1.5] [0 1.1]]
                      :angular-damping 0
                      :linear-damping 0}
                     body-def-args)))
@@ -277,7 +287,7 @@
       (let [p-pos (.getPosition player)
             bullet-pos (.getWorldPoint player (vec2 0 2.5)) ;; in front of the spacecraft
             #^Body bullet (make-simple-circle world
-                                              'bullet
+                                              (str 'bullet- (body-userdata player :name) "-" tick) ;; generate a unique bullet name to identify objects across the network line
                                               :pos (vec2->clj bullet-pos)
                                               :radius 0.6
                                               :linear-damping 1.5)]
@@ -342,7 +352,7 @@
 
 (defn player-contact [state player other-body-name other-body]
   (let [player-data (.get state player)]
-    (when (= other-body-name 'bullet)
+    (when (and (string? other-body-name) (.startsWith #^String other-body-name "bullet"))
       (println :collide (body-userdata player :name))
       ;; player player-data hit by bullet -> compute damage
       (let [pdamage (or (.get player-data 'damage) 0)]
@@ -405,6 +415,11 @@
 ;; player-gc: destroy a damaged player
 (def max-player-hitpoints 2)
 
+(defn player-destroyed [player-name]
+  (hoeck.thread/thread-sleep 3000)
+  (restart-game))
+
+(declare game-invoke-later)
 (defn destroy-player-job [#^World world tick #^HashMap state]
   (let [hp max-player-hitpoints ;; <- hitpoints
         p (.get state 'player-1)
@@ -414,11 +429,13 @@
     (when (and (< hp (or (.get p-data 'damage) 0)) (not (get p-data 'dead)))
       (.destroyBody world p)
       (create-player-debris world p)
-      (.put p-data 'dead true))
+      (.put p-data 'dead true)
+      (game-invoke-later #(player-destroyed 'player-1)))
     (when (and (< hp (or (.get o-data 'damage) 0)) (not (get o-data 'dead)))
       (.destroyBody world o)
       (create-player-debris world o)
-      (.put o-data 'dead true))))
+      (.put o-data 'dead true)
+      (game-invoke-later #(player-destroyed 'player-2)))))
 
 (comment (add-job 'destroy-player destroy-player-job))
 (comment (show-damage))
@@ -431,7 +448,40 @@
           p2 (or (.get (.get state (.get state 'player-2)) 'damage) 0)]
       (swap! current-player-hitpoints (constantly [p1 p2])))))
 
-;; test run
+
+;; extract all body state for syncing with our peer player
+
+;; only a known set of bodies will be created during the game (player, planet, bullets)
+;; so its enough to only sync pos, angle, linear velocity, angular velocity
+;; the final explosion may differ on both worlds
+
+(def current-body-state (atom {:tick 0 :state []}))
+
+(defn extract-body-state [#^World world tick state]
+  (when (zero? (rem tick 10))
+    (let [bstate (iter (for #^Body b call .getNext on (.getBodyList world))
+                       (collect [(body-userdata b :name)
+                                 (vec2->clj (.getPosition b))
+                                 (.getAngle b)
+                                 (vec2->clj (.getLinearVelocity b))
+                                 (.getAngularVelocity b)]))]
+      (swap! current-body-state (constantly {:tick tick :state bstate})))))
+
+(comment (with-world (extract-body-state world 10 state)))      
+
+;; executing game logic
+
+(def game-thread-queue (java.util.concurrent.LinkedBlockingQueue.)) ;; stuff executed on the game logic thread
+
+(defn game-invoke-later [f]
+  (.put game-thread-queue f))
+
+(defn game-exec []
+  (while true
+    (try ((.take game-thread-queue))
+         (catch Exception e (println "Exception" e "in game-exec thread")))))
+
+;; setup
 
 (defn setup-game []
 
@@ -475,6 +525,11 @@
   ;; hitpoints
   (add-job 'update-player-hitpoints update-player-hitpoints-job)
   
+  ;; getting sync data
+  (add-job 'extract-body-state extract-body-state)
+  
+  ;; setup the game-logic
+  
   )
 
 
@@ -485,10 +540,10 @@
     (let [;;player-1 (make-simple-box world 'player-1 :shape [0.7 1] :pos [0 +15] :angular-damping 2.0 :linear-damping 0)
           ;;player-2 (make-simple-box world 'player-2 :shape [0.7 1] :pos [0 -15] :angular-damping 2.0 :linear-damping 0)
           player-1 (make-player-body world 'player-1 player-1-draw
-                                     {:pos [0 +15] :angular-damping 2.0 :linear-damping 0})
+                                     {:pos [0 +14] :angular-damping 2.0 :linear-damping 0})
           player-2 (make-player-body world 'player-2 player-2-draw
-                                     {:pos [0 -15] :angular-damping 2.0 :linear-damping 0})
-          planet   (make-simple-circle world 'planet :radius 5 :dynamic false :friction 0.05 :draw-fn planet-draw)]
+                                     {:pos [0 -14] :angular-damping 2.0 :linear-damping 0})
+          planet   (make-simple-circle world 'planet :radius 5 :dynamic false :friction 0.03 :draw-fn planet-draw)]
       
       ;; store
       (.put state 'player-1 player-1)
@@ -505,99 +560,19 @@
 
 
 (redef key-typed 
-  (when (:o @hoeck.clojurebox2d.processing/keystatus) (restart-game)))
+  (when (:o @hoeck.clojurebox2d.processing/keystatus)
+    (game-invoke-later restart-game)))
 
+(do
+  (game-invoke-later setup-game)
+  (game-invoke-later restart-game))
 
+(game-exec)
 
-
-
-(comment
-  (defn mouse-coords
-    "given *applet* and and optionally pixel-coordinates,
-  calculate the current position in world-coordinates."
-    ([] (mouse-coords (mouse-x) (mouse-y)))
-    ([mx my]
-       (let [;; camera
-             [[cx cy] zoom] @my-camera
-             ;; -> world
-             wx (/ (- mx cx) (float zoom))
-             wy (/ (- my cy) (float zoom))]
-         [wx wy])))
-
-;; select a body, and store its name in the worldthreads state
-  (defn mouse-select-body
-    "use the current mouse pointer to select a body. Return the body's
-  name or nil if no body is under the mouse-ptr.
-  Additionally, store a reference at :selected-body in the world-threads
-  state.
-  Optionally call select-hook with the newly selected body (will be nil if
-  no body was selected) and (old) state."
-    [& select-hook]
-    (let [[wx wy] (mouse-coords)]
-      (println "pressed" wx wy)
-      (with-world
-        ;; always select the first body
-        (let [b (iter (let w (vec2 wx wy))
-                      (let d (vec2 0.1 0.1))
-                      (for shape in-array (query world (.sub w d) (.add w d)))
-                      (for body as (.getBody shape))
-                      (return-if (and (not (.isStatic body))
-                                      (.testPoint shape (.getXForm body) w))
-                                 body))]
-          (if-let [h (first select-hook)] (h b state))
-          (if b (body-userdata b :name))))))
-
-  (defn highlight-and-store-one-selected-body [body state]
-    (if-let [old-body (.get state :selected-body)]
-      (alter-body-userdata old-body assoc :draw-fn nil))
-    (when body
-      (alter-body-userdata body assoc :draw-fn selected-box-draw))
-    (.put state :selected-body body))
-
-;; on click, select a body, and show that its selected, and drag it around
-  (redef mouse-pressed
-    (mouse-select-body (fn [body state]                       
-                         (try
-                          (when body
-                            (println "putting body to sleep:" body)
-                            ;;(.putToSleep body)
-                            (.setMass body (make-mass 0 0));; mmmh ..., makes it static, mentioned somewhere in the box2d docs, but i would prefer a .setStatic method
-                            )
-                          (catch Exception e (println "Exception:" e)))
-                         (highlight-and-store-one-selected-body body state))))
-
-  (redef mouse-released
-    (with-world
-      (when-let [b (.get state :selected-body)]
-        (highlight-and-store-one-selected-body nil state)
-        (println "waking up body:" b "NOOOO")
-        (try
-         ;;(.wakeUp b)
-         (.setMassFromShapes b)
-         (catch Exception e (println "Exception:" e))))))
-
-  (redef mouse-dragged
-    (let [[x y] (mouse-coords)]
-      (with-world 
-        (when-let [b (.get state :selected-body)]
-          (println :body-moved x y)
-          (.setXForm b
-                     (hoeck.clojurebox2d.jbox2d/vec2 x y)
-                     (-> b .getAngle))))))
-
-
-
-
-
-)
-
-
-
-
-
-
-
-
-
+;; game thread:
+;; mode: client/server
+;; wait until-tick: game start (add-job step)
+;; syncronize: client: wait for 
+;; 
 
 

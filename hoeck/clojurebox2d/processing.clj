@@ -6,7 +6,9 @@
         (clojure.contrib pprint def))
   (:import (java.awt.event MouseWheelEvent MouseWheelListener WindowAdapter)
            (javax.swing JFrame JLabel JTextField JButton)
-           (processing.core PApplet PFont)))
+           (processing.core PApplet PFont)
+           ;;(processing.opengl PGraphicsOpenGL)
+           ))
 
 ;; sample draw function
 
@@ -81,16 +83,20 @@
 
              ;; initial size, P3D is the (fast) renderer
              (let [[hsize vsize] (:size opts)]
-               (size hsize vsize P3D))
-
+               (size hsize vsize P3D)
+               ;;(size hsize vsize OPENGL)
+               )
+               
              ;; anti-aliasing
-             (if (:smooth opts) (smooth))
+             (if (:smooth opts) (smooth) (no-smooth))
+             
              (no-stroke)
              (fill 0)
              (framerate (:framerate opts))
             
-             ;; default font             
-             (text-font (load-font "Free Monospaced.font"))))
+             ;; default font
+             ;;(text-font (load-font "Free Monospaced.font"))
+             ))
     (draw [] ;; default draw method
           (with-applet (draw)))
     

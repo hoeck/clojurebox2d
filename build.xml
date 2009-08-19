@@ -1,9 +1,9 @@
-<project name="rel" default="jar">
+<project name="rel" default="demo-jar">
 
     <description>
-       Copy or link the clj-processing sourced clojure.jar and clojure-contrib.jar
+       Copy or link the clojure.jar and clojure-contrib.jar
        into the deps directory.
-       To develop, put classes and . into your classpath.
+       To develop, put classes and . and deps into your classpath.
        Build with "ant".
     </description>
 
@@ -11,7 +11,7 @@
     <property name="classes.dir" location="classes"/>
     <property name="deps" location="deps"/>
 
-    <property name="jar.file" location="clojurebox2d.jar"/>
+    <property name="demo-jar.file" location="clojure-space-duel.jar"/>
 
     <target name="init" description="create build directories">
         <tstamp/>
@@ -31,26 +31,33 @@
                 </fileset>
             </classpath>
             <sysproperty key="clojure.compile.path" value="${classes.dir}"/>
-            <arg value="hoeck.clojurebox2d.processing.PApplet"/>
+            <arg value="hoeck.clojurebox2d.example.main"/>
         </java>
     </target>
 
-    <target name="jar" depends="gen-classes"
+    <target name="unjar" depends="init">
+        <unjar dest="${classes.dir}">
+          <fileset dir="${deps}">
+            <include name="*.jar"/>
+          </fileset>
+        </unjar>
+    </target>
+
+    <target name="demo-jar" depends="unjar, gen-classes"
         description="create jar including the clj sources and the custom classes">
-        <jar jarfile="${jar.file}">
-            <fileset file="README.txt"/>
-            <fileset file="LICENSE.txt"/>
-            <fileset dir="${classes.dir}" includes="hoeck/clojurebox2d/processing/PApplet*"/>
-            <fileset dir="${src.dir}" includes="**/*.clj"/>
+        <jar jarfile="${demo-jar.file}"
+             basedir="${classes.dir}">
+            <fileset dir="${src.dir}" includes="**/*.clj"/>         
             <manifest>
                 <attribute name="Class-Path" value="."/>
+                <attribute name="Main-Class" value="hoeck.clojurebox2d.example.main"/>
             </manifest>
         </jar>
     </target>
 
     <target name="clean" description="clean generated files (jar and classes)">
         <delete dir="${classes.dir}"/>
-        <delete file="${jar.file}"/>
+        <delete file="${demo-jar.file}"/>
     </target>
 
 </project>

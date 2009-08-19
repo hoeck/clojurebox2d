@@ -563,11 +563,12 @@
   (when (:o @hoeck.clojurebox2d.processing/keystatus)
     (game-invoke-later restart-game)))
 
-(do
+(defn clojure-space-duel
+  "Sets up the game thread and starts the game."
+  []
   (game-invoke-later setup-game)
-  (game-invoke-later restart-game))
-
-(game-exec)
+  (game-invoke-later restart-game)
+  (game-exec))
 
 ;; game thread:
 ;; mode: client/server

@@ -1,0 +1,6 @@
+
+deps/clojure.jar
+deps/clojure-contrib.jar
+
+clojurebox2d.jar
+classes

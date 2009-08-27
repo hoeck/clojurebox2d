@@ -14,7 +14,10 @@
            (org.jbox2d.dynamics.contacts ContactResult)
            (org.jbox2d.dynamics.joints Joint MouseJoint MouseJointDef)
            
-           (java.util.concurrent ArrayBlockingQueue ConcurrentLinkedQueue)))
+           (java.util.concurrent ArrayBlockingQueue ConcurrentLinkedQueue TimeUnit)))
+
+(def #^World *world*)
+(def #^HashMap *state*)
 
 (defn unsupported-operation!
   "throw a java.lang.UnsupportedOperationException with messages as text."
@@ -168,22 +171,25 @@ x1,y1
 ;; jbox2d World is thread-unsafe
 ;; -> thread-confinement:
 ;; world runs in its own thread and is accessed only from within this thread
-(defn start-world-thread
-  "... and return a map to add jobs to the world."
+(defn start-jbox2d-thread
+  "... and return a atom to swap in a worker function."
   [init-world-fn frequency]
-  (let [periodic-time (long (/ (.toNanos (timeunit :sec) 1) frequency));; in nanoseconds
-        tu (timeunit :nano)
-        jobs (atom {})] ;; functions executed at every step
-    (background
-     (fn [] (let [world (init-world-fn)
-                  state (java.util.HashMap.)] ;; mutable state, keep references to body etc.
-              (loop [start (System/nanoTime)
-                     tick 0]
-                ;; execute all jobs
-                (doseq [j (vals @jobs)] (j world tick state))
-                ;; sleep the remaining time or continue immediately
-                (if (thread-sleep tu (max 0 (- periodic-time (- (System/nanoTime) start))))
-                  (recur (System/nanoTime) (inc tick))))))
-     'jbox-physics)
-    ;; map of jobs
-    jobs))
+  (let [periodic-time (long (/ 1000000000 frequency)) ;; in nanoseconds
+        job (atom (constantly nil))] ;; function executed at every step                      
+    (.start (Thread. (fn [] (binding [*world* (init-world-fn)
+                                      *state* (java.util.HashMap.)] ;; mutable state, keep references to body etc.                                      
+                              (try (loop [start (System/nanoTime)
+                                          tick 0]
+                                     ;; execute job
+                                     (@job tick)
+                                     ;; sleep the remaining time or continue immediately
+                                     (if (.sleep TimeUnit/NANOSECONDS (- periodic-time (- (System/nanoTime) start)))
+                                       (recur (System/nanoTime) (inc tick))))
+                                   (catch InterruptedException e nil)))) ;; quit thread on intertuption
+                     'jbox-physics))
+    ;; job atom
+    job))
+
+
+
+

@@ -49,10 +49,10 @@
 
 (declare add-job add-task run-world-tasks)
 (defn init
-  "initialize clojurebox2d.
-  Start processing and create dedicated jbox2d thread."
-  ([] (init {}))
-  ([opts-map]
+  "initialize clojurebox2d. Start processing and create dedicated jbox2d thread.
+  Call f within this-thread. Return the created Thread."
+  ([f] (init f {}))
+  ([f opts-map]
      (let [physics-frames 60.0
            render-frames 30.0
            ;; creates its own render thread, returns the frame and applet:
@@ -72,7 +72,7 @@
                         :frame frm
                         :applet app})
        ;; post-init
-
+       
        ;; makes the with-world thingy work
        (add-job 'run-tasks run-world-tasks)))) 
     

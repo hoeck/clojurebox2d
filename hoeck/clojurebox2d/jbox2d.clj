@@ -4,20 +4,19 @@
 
 (ns hoeck.clojurebox2d.jbox2d
   (:use (clojure.contrib pprint def)
-        hoeck.thread)
+        hoeck.iterate)
   (:import (org.jbox2d.common Color3f Settings Vec2)
            (org.jbox2d.collision ContactID AABB
                                  MassData)
-           (org.jbox2d.collision.shapes Shape PolygonDef CircleDef  ShapeDef)
+           (org.jbox2d.collision.shapes Shape PolygonDef CircleDef  ShapeDef
+                                        PolygonShape CircleShape)
            (org.jbox2d.dynamics Body BodyDef BoundaryListener ContactListener
                                 DebugDraw DestructionListener World)
            (org.jbox2d.dynamics.contacts ContactResult)
            (org.jbox2d.dynamics.joints Joint MouseJoint MouseJointDef)
            
-           (java.util.concurrent ArrayBlockingQueue ConcurrentLinkedQueue TimeUnit)))
-
-(def #^World *world*)
-(def #^HashMap *state*)
+           (java.util.concurrent ArrayBlockingQueue ConcurrentLinkedQueue TimeUnit)
+           (java.util HashMap)))
 
 (defn unsupported-operation!
   "throw a java.lang.UnsupportedOperationException with messages as text."
@@ -65,13 +64,15 @@ x1,y1
 (defn make-shape-def 
   "Create a ShapeDef from args which is a hashmap. Argmap:
   :shape x     -> radius for :circle
-         [x y] -> :box
-         [[x y] [x y] [x y]+] -> :poly
+         [x y] -> width-height for :box
+         [[x y] [x y] [x y]+] -> many vecs for :poly
   :angle 0
-  :center [0 0]
+  :center [0 0] (only for :box)
   :friction 0.3
   :density 1.0
-  :restitution 0.3"
+  :restitution 0.3
+
+  Shapes must be convex."
   [args]
   (let [{:keys [shape]} args
         shape-def (condp = (get-shape-type shape)
@@ -105,7 +106,7 @@ x1,y1
   [shape-def args]
   (let [{:keys [pos angle bullet allow-sleep]} args]
     (let [b (BodyDef.)]
-      (-> b .position (.set (-> args :pos vec2)))
+      (-> b .position (.set (-> args (:pos [0 0]) vec2)))
       (set! (.angle b)          (:angle args 0))
       (set! (.isBullet b)       (:bullet args false))
       (set! (.allowSleep b)     (:allow-sleep args true))
@@ -117,7 +118,7 @@ x1,y1
   "Create a body in the world using opts and set the given userdata on it.
   See make-shape-def and make-body-def for valid arg-keys.
   additionally:
-    :dynamic true/false  when false, make an unsimulated (ground) body."
+    :dynamic true   when false, make an unsimulated (ground) body."
   ([#^World world userdata args]
      (let [sd (make-shape-def args)
            bd (make-body-def sd args)
@@ -126,6 +127,21 @@ x1,y1
        (if (:dynamic args true) (.setMassFromShapes body))
        (.setUserData body userdata)
        body)))
+
+(defstruct #^{:private true} body-struct
+  :pos :angle :linear-velocity :angular-velocity
+  :userdata)
+
+(defn body->clj 
+  "Convert a jbox2d Body into a clojure hashmap, eg. to share it across
+  Threads."
+  [#^Body b]
+  (create-struct 
+   (-> b .getPosition vec2->clj)
+   (.getAngle b)
+   (-> b .getLinearVelocity vec2->clj)
+   (.getAngularVelocity b)
+   (.getUserData b)))
 
 (defn make-mass
   "Creates a jbox2d MassData object from the given mass and inertia.
@@ -141,7 +157,7 @@ x1,y1
 
 ;(def body (make-box (:world cbox) {:pos [5 5] :shape [0.5 0.5]}))
 
-(defnk create-world
+(defn make-world
   "Create a jbox2d world using lower and upper to create the worlds
   AABB (see make-aabb)"
   [opts]
@@ -168,28 +184,72 @@ x1,y1
   (print-method (.y vec2) w)
   (.write w ")"))
 
+
+(def #^World *world*)
+(def #^HashMap *state*)
+
+(defn jbox2d-loop [tick]) ;; default function, does nothing
+
 ;; jbox2d World is thread-unsafe
 ;; -> thread-confinement:
 ;; world runs in its own thread and is accessed only from within this thread
-(defn start-jbox2d-thread
-  "... and return a atom to swap in a worker function."
-  [init-world-fn frequency]
-  (let [periodic-time (long (/ 1000000000 frequency)) ;; in nanoseconds
-        job (atom (constantly nil))] ;; function executed at every step                      
-    (.start (Thread. (fn [] (binding [*world* (init-world-fn)
-                                      *state* (java.util.HashMap.)] ;; mutable state, keep references to body etc.                                      
-                              (try (loop [start (System/nanoTime)
-                                          tick 0]
-                                     ;; execute job
-                                     (@job tick)
-                                     ;; sleep the remaining time or continue immediately
-                                     (if (.sleep TimeUnit/NANOSECONDS (- periodic-time (- (System/nanoTime) start)))
-                                       (recur (System/nanoTime) (inc tick))))
-                                   (catch InterruptedException e nil)))) ;; quit thread on intertuption
-                     'jbox-physics))
-    ;; job atom
-    job))
+(defn make-jbox2d-thread
+  "... and return a atom to swap in a worker function.
+  Jbox2d.World is thread-unsafe. World and World methods should only
+  be accessed from within this thread."
+  [opts]
+  (let [frequency (:thread-frequency opts 60)
+        periodic-time (long (/ 1000000000 frequency));; in nanoseconds
+        ;;job (atom (constantly nil)) ;; function executed at every step
+        ]
+    (Thread. #^Runnable (fn [] (binding [*world* (make-world opts)
+                                         ;; mutable state, keep references to body etc.
+                                         *state* (java.util.HashMap.)]
+                                 (try (loop [start (System/nanoTime)
+                                             tick 0]
+                                        (jbox2d-loop tick)
+                                        ;; sleep the remaining time or continue immediately
+                                        (.sleep TimeUnit/NANOSECONDS (- periodic-time (- (System/nanoTime) start)))
+                                        (recur (System/nanoTime) (inc tick)))
+                                      
+                                      ;; quit thread on intertuption
+                                      (catch InterruptedException e
+                                        (println "jbox-physics interrupted.")))))
+             "jbox-physics")))
 
+;; more utils
 
+(defn query
+  "Return an array of shapes which potentially overlap with the given aabb.
+  aabb defaults to the world aabb."
+  ([#^World world] 
+     (query world (.getWorldAABB world)))
+  ([world v0 v1]
+     (query world (make-aabb v0 v1)))
+  ([world x0 y0 x1 y1]
+     (query world (make-aabb x0 y0 x1 y1)))
+  ([#^World world aabb]
+     (.query world aabb (.getBodyCount world))))
 
+(defn get-shape-points
+  "given a polygon shape, return a seq of its shape corners
+  in world-coordinates."
+  [#^PolygonShape shape] ;; for polygon shapes only!
+  (iter (let #^Body body (.getBody shape))
+        (for vert in-array (.getVertices shape))
+        (collect (vec2->clj (.getWorldPoint body vert)))))
+
+(defn get-circle-points
+  "Given a circle shape, return its center in world coordinates and
+  its radius: [center, radius]"
+  [#^CircleShape shape]
+  (vector (vec2->clj (.getWorldPoint (.getBody shape) (.getLocalPosition shape)))
+          (.getRadius shape)))
+
+(defn clear-world
+  "remove all objects from world"
+  [#^World world]
+  (iter (for b call .getNext on (.getBodyList world))
+        (do (.destroyBody world b)
+            (recur))))
 

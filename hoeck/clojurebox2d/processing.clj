@@ -6,6 +6,7 @@
         (clojure.contrib pprint def))
   (:import (java.awt.event MouseWheelEvent MouseWheelListener WindowAdapter)
            (javax.swing JFrame JLabel JTextField JButton)
+           (java.util.concurrent.atomic AtomicReference)
            (processing.core PApplet PFont)
            ;;(processing.opengl PGraphicsOpenGL)
            ))
@@ -93,7 +94,9 @@
              (no-stroke)
              (fill 0)
              (framerate (:framerate opts))
-            
+             
+             (when-let [h (:setup-hook opts)] (h))
+
              ;; default font
              ;;(text-font (load-font "Free Monospaced.font"))
              ))
@@ -135,10 +138,11 @@
 (defnk setup-processing
   "Create a swing Frame, create a processing.core.PApplet applet
   inside and return the created objects [applet, frame]."
-  [:size [200 200] :smooth true :framerate 30]
-  (let [applet (make-applet {:smooth smooth
-                             :size size
-                             :framerate framerate})
+  [:size [200 200] :smooth true :framerate 30 :applet-fn make-applet :setup-hook nil]
+  (let [applet (applet-fn {:smooth smooth
+                           :size size
+                           :framerate framerate
+                           :setup-hook setup-hook})
         [width height] size
         swing-frame (JFrame. "cljtest")]
     (.init applet)
@@ -150,14 +154,54 @@
       (.setVisible true))
     [swing-frame applet]))
 
-  ;(fill 226)
-  ;(background-float 0 0 0)
-  ;(fill-float (rand-int 125) (rand-int 125) (rand-int 125))
-  ;(ellipse 100 100 (rand-int 90) (rand-int 90))
-  ;(stroke-float 10)
-  ;(line 10 10 (+ 200 (rand-int 1000)) (+ 200 (rand-int 500)))
-  ;(no-stroke)
-  ;(filter-kind INVERT)
+;; testing draw functions quickly in a dedicated processing environment
+
+(def #^{:private :true} sketch-setup? (AtomicReference. nil))
+(def #^{:private :true} current-sketch (AtomicReference. nil))
+
+(defn- setup-sketch
+  []
+  (let [make-applet-fn (fn [opts]
+                         (proxy [PApplet] []
+                           (setup [] 
+                                  (with-applet 
+                                    (let [[hsize vsize] (:size opts)]
+                                      (size hsize vsize P3D))
+                                    (if (:smooth opts) (smooth) (no-smooth))
+                                    (no-stroke)
+                                    (fill 0)
+                                    (framerate (:framerate opts))))
+                           (draw [] (with-applet
+                                      (let [f (.getAndSet current-sketch nil)]
+                                        (when (ifn? f) (f)))))))
+        [frm applet] (setup-processing :framerate 10 
+                                       :size [320 200]
+                                       :applet-fn make-applet-fn)]
+    (.addWindowListener frm (proxy [WindowAdapter] []
+                              (windowClosing [e] 
+                                             (.set sketch-setup? nil)
+                                             (.stop applet))))))
+
+(defn show-sketch!
+  "Execute f with *applet* bound to a PApplet in a separate frame.
+  Useful for developing and testing graphics without 
+  interrupting/redefining the main draw method."
+  [f]
+  (when (.compareAndSet sketch-setup? nil true) (setup-sketch))
+  (.compareAndSet current-sketch nil f))
+
+(defmacro with-buffer
+  "Execute body within *applet* bound to a new PGraphics object.
+  Wraps body in .beginDraw and .endDraw statements.
+  Returns the newly created PGraphics.
+  Useful for creating images without showing them in a frame during creation."
+  [[size-x size-y] & body]
+  `(let [g# (.createGraphics (PApplet.) ~size-x ~size-y P3D)]
+     (binding [*applet* g#]
+       (.beginDraw *applet*)
+       ~@body
+       (.endDraw *applet*))
+     g#))
 
 ;; methods to overwrite in PApplet
 (def processing-methods

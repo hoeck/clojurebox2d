@@ -310,3 +310,29 @@
         (do (println x)
             (recur))))
 
+
+;;   comparison: iter vs. plain loop
+;;
+;; one line:
+;;(iter (for shape call .next on (query *world*)) (collect (jbox->clojurebox shape)))
+;;(loop [shape (query *world*) bodies []] (if shape (recur (.next shape) (conj bodies (jbox->clojurebox shape))) bodies))
+;;
+;; iter: 81 chars (70% of loop)
+;;       2 levels of nesting
+;;       1 temporary binding: shape
+;; loop: 117 chars (144% of iter)
+;;       2 levels of nesting
+;;       2 tmp bindings: shape, bodies
+;;
+;; pretty printed:
+;;
+;; (iter (for shape call .next on (query *world*)) 
+;;       (collect (jbox->clojurebox shape)))
+;;
+;; (loop [shape (query *world*)
+;;        bodies []]
+;;   (if shape 
+;;     (recur (.next shape)
+;;            (conj bodies (jbox->clojurebox shape)))
+;;     bodies))
+

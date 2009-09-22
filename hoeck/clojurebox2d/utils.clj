@@ -170,7 +170,7 @@ f should take tick as the only parameter."
   "Executes body in the jbox2d threadCaptures 'tick'. In contrast to with-world,
   does not wait for the result of body."
   [& body]
-  `(add-task (fn [~'tick] ~@body)))
+  `(add-event* (fn [~'tick] ~@body)))
 
 ;;(defn jbox2d-tasks
 ;;  "jbox2d-loop: runs one-time tasks on world, e.g. adding bodies.  Use the
@@ -181,10 +181,9 @@ f should take tick as the only parameter."
 
 ;; contact-events
 
-(defn contact-dispatch [body0, body1, contact-type, _]
-  #{(body-userdata body0 :type)
-    (body-userdata body1 :type)
-    contact-type})
+(defn contact-dispatch [body0, body1, _, _]
+  [(body-userdata body0 :type)
+   (body-userdata body1 :type)])
 
 (defmulti contact
   contact-dispatch
@@ -192,11 +191,16 @@ f should take tick as the only parameter."
 
 (defmethod contact nil [b0 b1 t cp])
 
-(defmacro call-contact-multimethod [contact-point contact-keyword]
-  `(contact (.getBody (.shape1 #^ContactPoint ~contact-point))
-            (.getBody (.shape2 #^ContactPoint ~contact-point))
-            ~contact-keyword
-            ~contact-point))
+(defn call-contact-multimethod [contact-point contact-keyword]
+  (let [b0 (.getBody (.shape1 #^ContactPoint contact-point))
+        b1 (.getBody (.shape2 #^ContactPoint contact-point))
+        t0 (body-userdata b0 :type)
+        t1 (body-userdata b1 :type)]
+    (if (and t0 t1)
+      (if (< 0 (.compareTo t0 t1))
+        (contact b1 b0 contact-keyword contact-point)
+        (contact b0 b1 contact-keyword contact-point))
+      (contact b0 b1 contact-keyword contact-point))))
 
 (defn register-contact-multimethod
   "Register the contact multimethod with the jbox2d simulation so that

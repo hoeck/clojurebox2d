@@ -84,7 +84,7 @@
 (defn planet-draw [[[x y] r]]
   (stroke-int (color :black))
   (stroke-weight 1)
-  (fill-int (color :black))
+  (fill-int (color :white))
   (let [d (* 2.2 r)]
     (ellipse x y d d)))
 
@@ -231,23 +231,72 @@
      :wrap-world-box worldsize
      :player-control player-c}))
 
-
 (defn initialize []
   (send game (constantly {}))
   (redef draw [] (my-draw @world-state))
-  (send game merge (setup-world))  
-  (send game #(do (generate-stars (:wrap-world-box %) [10 4] game) %))
-  
+  (send game merge (setup-world))
+  (send game (constantly (generate-stars (:wrap-world-box %) [10 4] game) %))
   (send game assoc :player (make-player 1 :red))
   (send game #(do (swap! (-> % :player-control) 
                          (constantly (fn [tick] (player-control (-> @game :player :state)))))
                   %))
-  (send game #(do ((-> % :player :state) :reset) %))
-  (send game #(do ((-> % :player :state) :alive) %)))
+  (send game #(do ((-> % :player :state) :reset)
+                  ((-> % :player :state) :alive)    
+                  %))
+  (send game #(do ;; planet body           
+                (add-event 0 (make-body *world*
+                                       (make-body-userdata :name 'planet 
+                                                           :type :planet
+                                                           :draw-fn planet-draw)
+                                       {:pos [0 0]
+                                        :shape 5
+                                        :dynamic false
+                                        :friction 0.00
+                                        :draw-fn planet-draw
+                                        :angle PI}))
+                (-> % :gravity (swap! (constantly 15000)))
+                %))
+
+  (map #(send game %)
+       [#(merge % (setup-world))
+        #(do (generate-stars (:wrap-world-box %) [10 4] game)e %)
+        #(assoc % :player (make-player 1 :red))
+        #(do (swap! (-> % :player-control) (constantly (fn [tick] (player-control (-> @game :player :state))))) %)
+        #(do ((-> % :player :state) :reset) %)
+        #(do  %)
+        #(do;; planet body           
+           (add-event 0 (make-body *world*
+                                   (make-body-userdata :name 'planet 
+                                                       :type :planet
+                                                       :draw-fn planet-draw)
+                                   {:pos [0 0]
+                                    :shape 5
+                                    :dynamic false
+                                    :friction 0.00
+                                    :draw-fn planet-draw
+                                    :angle PI}))
+           (-> % :gravity (swap! (constantly 15000)))
+           %)]))
+
+(defn reset-player []
+  ((or (-> @game :player :state) (fn [_])) :destroy)
+  (dorun (map #(send game %)
+              [#(assoc % :player (make-player 1 :red))
+               #(do (swap! (-> % :player-control) (constantly (fn [tick] (player-control (-> @game :player :state))))) %)
+               #(do ((-> % :player :state) :reset) %)
+               #(do ((-> % :player :state) :alive) %)])))
+
+
+(defmethod contact [:bullet :player] [b0 b1 t cp]
+  (when (= t :add)
+    (add-event )
+    (println (format "player %s hit by bullet %s" b1 b0))
+    ))
+
+(with-jbox2d (register-contact-multimethod *world*))
+
 
 (comment
-
-  (do)
 
   ;;(with-jbox2d (:draw-fn (first (map #(-> % .getBody body-userdata) (seq (query *world*))))))
   ;;(show-sketch! (fn [] (with-jbox2d (:draw-fn (first (map #(-> % .getBody body-userdata) (seq (query *world*))))) [[0 0] [-1 1] [1 -1]])))
@@ -264,9 +313,7 @@
 
   (with-jbox2d (destroy-body *world* (.get *state* (-> @game :player :name))))
 
-  (with-jbox2d (dotimes [n 100] (make-circle 'foo {})))
-
-  )
+  (with-jbox2d (dotimes [n 100] (make-circle 'foo {}))))
 
 
 

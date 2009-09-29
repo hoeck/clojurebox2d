@@ -23,6 +23,11 @@
            (org.jbox2d.dynamics Body World ContactListener)
            (org.jbox2d.dynamics.contacts ContactPoint)))
 
+;(ns-unmap *ns* 'defn)
+;(defmacro defn [& rest]
+;  `(do (println "defining:" (first '~rest))
+;       (clojure.core/defn ~@rest)))
+
 (declare game)
 
 ;; camera
@@ -232,16 +237,17 @@
      :player-control player-c}))
 
 (defn initialize []
+  (clear-agent-errors game)
   (send game (constantly {}))
   (redef draw [] (my-draw @world-state))
   (send game merge (setup-world))
-  (send game (constantly (generate-stars (:wrap-world-box %) [10 4] game) %))
+  (send game #(do (generate-stars (:wrap-world-box %) [10 4] game) %))
   (send game assoc :player (make-player 1 :red))
   (send game #(do (swap! (-> % :player-control) 
                          (constantly (fn [tick] (player-control (-> @game :player :state)))))
                   %))
-  (send game #(do ((-> % :player :state) :reset)
-                  ((-> % :player :state) :alive)    
+  (send game #(do ((-> % :player :state) :reset (-> % :player :name))
+                  ((-> % :player :state) :alive)
                   %))
   (send game #(do ;; planet body           
                 (add-event 0 (make-body *world*
@@ -257,26 +263,27 @@
                 (-> % :gravity (swap! (constantly 15000)))
                 %))
 
-  (map #(send game %)
-       [#(merge % (setup-world))
-        #(do (generate-stars (:wrap-world-box %) [10 4] game)e %)
-        #(assoc % :player (make-player 1 :red))
-        #(do (swap! (-> % :player-control) (constantly (fn [tick] (player-control (-> @game :player :state))))) %)
-        #(do ((-> % :player :state) :reset) %)
-        #(do  %)
-        #(do;; planet body           
-           (add-event 0 (make-body *world*
-                                   (make-body-userdata :name 'planet 
-                                                       :type :planet
-                                                       :draw-fn planet-draw)
-                                   {:pos [0 0]
-                                    :shape 5
-                                    :dynamic false
-                                    :friction 0.00
-                                    :draw-fn planet-draw
-                                    :angle PI}))
-           (-> % :gravity (swap! (constantly 15000)))
-           %)]))
+;  (map #(send game %)
+;       [#(merge % (setup-world))
+;        #(do (generate-stars (:wrap-world-box %) [10 4] game)e %)
+;        #(assoc % :player (make-player 1 :red))
+;        #(do (swap! (-> % :player-control) (constantly (fn [tick] (player-control (-> @game :player :state))))) %)
+;        #(do ((-> % :player :state) :reset) %)
+;        #(do  %)
+;        #(do;; planet body           
+;           (add-event 0 (make-body *world*
+;                                   (make-body-userdata :name 'planet 
+;                                                       :type :planet
+;                                                       :draw-fn planet-draw)
+;                                   {:pos [0 0]
+;                                    :shape 5
+;                                    :dynamic false
+;                                    :friction 0.00
+;                                    :draw-fn planet-draw
+;                                    :angle PI}))
+;           (-> % :gravity (swap! (constantly 15000)))
+;           %)])
+)
 
 (defn reset-player []
   ((or (-> @game :player :state) (fn [_])) :destroy)
@@ -287,13 +294,13 @@
                #(do ((-> % :player :state) :alive) %)])))
 
 
-(defmethod contact [:bullet :player] [b0 b1 t cp]
-  (when (= t :add)
-    (add-event )
-    (println (format "player %s hit by bullet %s" b1 b0))
-    ))
+;(defmethod contact [:bullet :player] [b0 b1 t cp]
+;  (when (= t :add)
+;    (add-event )
+;    (println (format "player %s hit by bullet %s" b1 b0))
+;    ))
 
-(with-jbox2d (register-contact-multimethod *world*))
+;;(with-jbox2d (register-contact-multimethod *world*))
 
 
 (comment

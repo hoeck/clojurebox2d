@@ -2,6 +2,7 @@
 ;; player related code
 (ns hoeck.clojurebox2d.example.player
   (:use hoeck.clojurebox2d
+        hoeck.clojurebox2d.statemachine
         hoeck.clojurebox2d.jbox2d
         hoeck.clojurebox2d.utils
         hoeck.clojurebox2d.processing
@@ -14,8 +15,7 @@
            (org.jbox2d.dynamics Body World ContactListener)
            (org.jbox2d.dynamics.contacts ContactPoint)))
 
-
-(def player-constants
+(def constants
      {:hitpoints 10
       :bullets 10
       :thrust-amount 110
@@ -23,54 +23,43 @@
 
 ;; model player with a state machine:
 (declare turn-body, thrust-body, player-shoot)
-(defn make-player-state [pname] ;; name of the player
-  (let [state-agent (agent {:state nil})
-        ;; state keys:
-        ;;   :bullets  .. number of bullets the player owns
-        ;;   :state    .. state the player is in
-        ;;   :hp       .. hitpoints of the player, 0 == dead
-        ;;   :msg      .. last received message
-        ;;   :msg-opts .. optional args to last received msg
-        ;; states:
-        ;;   :init
-        ;;   :alive
-        ;;   :dead
-        ;; messages:
-        ;;   :hit hp
-        ;;   :move (or :shoot :turn-left :turn-right :thrust)
-        ;;   :reset
-        alter-state (fn alter-state [{:keys [state hp bullets last-shot] :as player-state}
-                                     msg
-                                     & [msg-opt-head & msg-opt-rest]]
-                      (merge player-state
-                             (condp = msg
-                               :reset {:state :init
-                                       :hp (:hitpoints player-constants)
-                                       :bullets 0
-                                       :last-shot 0}
-                               :alive {:state :alive}
-                               :hit (when (= state :alive)
-                                      (let [hp (- hp (or msg-opt-head 1))]
-                                        (if (< 0 hp)
-                                          {:state :alive  :hp hp}
-                                          {:state :killed :hp 0})))
-                               :move (when (= state :alive)
-                                       (condp = msg-opt-head
-                                         :left   (do (add-event 0 (turn-body    (.get *state* pname) :left  (:turn-amount player-constants))) nil)
-                                         :right  (do (add-event 0 (turn-body    (.get *state* pname) :right (:turn-amount player-constants))) nil)
-                                         :thrust (do (add-event 0 (thrust-body  (.get *state* pname) (:thrust-amount player-constants))) nil)
-                                         :shoot  (when (and (< bullets 10) (< 6 (- @current-tick last-shot))) 
-                                                   (add-event 0 (player-shoot (.get *state* pname)))
-                                                   {:bullets (inc bullets) :last-shot @current-tick})))
-                               :destroy (do (add-event 0 (destroy-body *world* (.get *state* pname)))
-                                            {:state :destroyed})
-                               :bullet-dec {:bullets (dec bullets)}
-                               player-state)))]
-    (fn spielerzustandsautomat
-      ([] state-agent)
-      ([msg] (send state-agent alter-state msg))
-      ([msg arg-1] (send state-agent alter-state msg arg-1))
-      ([msg arg-1 & more-args] (apply send state-agent alter-state msg arg-1 more-args)))))
+
+(def-state-machine player-state)
+
+(defsmethod player-state :reset [player-name]
+  {:state :init
+   :hp (constants :hitpoints)
+   :bullets 0
+   :last-shot 0
+   :player-name player-name})
+
+(defsmethod player-state :alive []
+  {:state :alive})
+
+(defsmethod player-state :hit [:hp :state hp-amount]
+  (when (= state :alive)
+    (let [hp (- hp hp-amount)]
+      (if (< 0 hp) 
+        {:hp hp}
+        (do (state-machine :killed) nil)))))
+
+(defsmethod player-state :move [:state :bullets :last-shot :player-name move-cmd]
+  (when (= state :alive)
+    (condp = move-cmd
+      :left   (do (add-event 0 (turn-body    (.get *state* player-name) :left  (:turn-amount constants))) nil)
+      :right  (do (add-event 0 (turn-body    (.get *state* player-name) :right (:turn-amount constants))) nil)
+      :thrust (do (add-event 0 (thrust-body  (.get *state* player-name) (:thrust-amount constants))) nil)
+      :shoot  (when (and (< bullets 10) (< 6 (- @current-tick last-shot)))
+                (add-event 0 (player-shoot (.get *state* player-name) state-machine))
+                {:bullets (inc bullets) :last-shot @current-tick}))))
+
+(defsmethod player-state :kill [:player-name]
+  ;; destruction animation
+  (add-event 0 (destroy-body *world* (.get *state* player-name)))
+  {:state :killed})
+
+(defsmethod player-state :bullet-dec [:bullets]
+  {:bullets (dec bullets)})
 
 ;; jbox2d
 
@@ -94,7 +83,7 @@
       (triangle x0 y0 x1 y1 x2 y2))))
 
 ;; player ctor  
-
+;;(def player-state-transitions (atom []))
 (defn make-player
   "returns a hashmap:
   :name  .. id, as a key in the world state hashmap
@@ -102,7 +91,9 @@
   :state .. state machine closure"
   [name player-color]
   (let [pdraw (make-player-draw-fn (color player-color))
-        player-state (make-player-state name)]
+        player-state (make-state-machine player-state :reset name)
+        ;;player-state (make-debugging-state-machine player-state-transitions name :reset name)
+        ]
     (add-event 0 (let [b (make-player-body
                           (make-body-userdata :name name
                                               :draw-fn pdraw
@@ -147,12 +138,12 @@
 (defn make-bullet
   "make a bullet and store some methods in its userdata.
   I wish I had newnew for this"
-  [player]
+  [player player-state-machine]
   (let [tick @current-tick
         player-name (body-userdata player :name)
-        bullet-pos (.getWorldPoint player (vec2 0 2.0)) ;; somewhere in front of the spacecraft
+        bullet-pos (.getWorldPoint player (vec2 0 2.0));; somewhere in front of the spacecraft
         #^Body bullet (make-body *world*
-                                  ;; generate a unique bullet name to identify objects across the network line
+                                 ;; generate a unique bullet name to identify objects across the network line
                                  (make-body-userdata :name (str 'bullet- player-name "-" tick)
                                                      :draw-fn bullet-draw
                                                      :type :bullet)
@@ -166,16 +157,14 @@
     (.applyImpulse bullet (.getWorldVector player (vec2 [0 120])) bullet-pos)
 
     ;; methods
-    (alter-body-userdata bullet assoc 
-                         :destroy (fn [] 
-                                    (when (not (body-userdata bullet :destroyed))
-                                      (destroy-body *world* bullet)
-                                      ((-> @hoeck.clojurebox2d.example/game :player :state) :bullet-dec))))))
+    (fn destroy-body [] 
+      (when (not (body-userdata bullet :destroyed))
+        (destroy-body *world* bullet)
+        (player-state-machine :bullet-dec)))))
 
-(defn player-shoot [#^Body player]
-  (add-event 120 
-    (destroy-body *world* bullet)
-    ((-> @hoeck.clojurebox2d.example/game :player :state) :bullet-dec)))
+(defn player-shoot [#^Body player player-state-machine]
+  (let [b (make-bullet player player-state-machine)]
+    (add-event 120 (b))))
 
 
 (comment (with-jbox2d (player-shoot (.get *state* 1))))

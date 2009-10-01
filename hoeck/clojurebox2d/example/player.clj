@@ -17,8 +17,9 @@
 
 (def constants
      {:hitpoints 10
-      :bullets 10
+      :bullets 5
       :thrust-amount 110
+      :brake-amount -70
       :turn-amount 20})
 
 ;; model player with a state machine:
@@ -49,9 +50,10 @@
       :left   (do (add-event 0 (turn-body    (.get *state* player-name) :left  (:turn-amount constants))) nil)
       :right  (do (add-event 0 (turn-body    (.get *state* player-name) :right (:turn-amount constants))) nil)
       :thrust (do (add-event 0 (thrust-body  (.get *state* player-name) (:thrust-amount constants))) nil)
-      :shoot  (when (and (< bullets 10) (< 6 (- @current-tick last-shot)))
+      :shoot  (when (and (< bullets (:bullets constants)) (< 6 (- @current-tick last-shot)))
                 (add-event 0 (player-shoot (.get *state* player-name) state-machine))
-                {:bullets (inc bullets) :last-shot @current-tick}))))
+                {:bullets (inc bullets) :last-shot @current-tick})
+      :brake  (do (add-event 0 (thrust-body  (.get *state* player-name) (:brake-amount constants))) nil))))
 
 (defsmethod player-state :kill [:player-name]
   ;; destruction animation
@@ -157,7 +159,7 @@
     (.applyImpulse bullet (.getWorldVector player (vec2 [0 120])) bullet-pos)
 
     ;; methods
-    (fn destroy-body [] 
+    (fn destroy-bullet [] 
       (when (not (body-userdata bullet :destroyed))
         (destroy-body *world* bullet)
         (player-state-machine :bullet-dec)))))

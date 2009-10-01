@@ -28,6 +28,10 @@
 ;  `(do (println "defining:" (first '~rest))
 ;       (clojure.core/defn ~@rest)))
 
+(defn throw-agent-error [a]
+  (when-let [ae (first (agent-errors a))]
+    (throw ae)))
+
 (declare game)
 
 ;; camera
@@ -237,53 +241,43 @@
      :player-control player-c}))
 
 (defn initialize []
-  (clear-agent-errors game)
-  (send game (constantly {}))
-  (redef draw [] (my-draw @world-state))
-  (send game merge (setup-world))
-  (send game #(do (generate-stars (:wrap-world-box %) [10 4] game) %))
-  (send game assoc :player (make-player 1 :red))
-  (send game #(do (swap! (-> % :player-control) 
-                         (constantly (fn [tick] (player-control (-> @game :player :state)))))
-                  %))
-  (send game #(do ((-> % :player :state) :reset (-> % :player :name))
-                  ((-> % :player :state) :alive)
-                  %))
-  (send game #(do ;; planet body           
-                (add-event 0 (make-body *world*
-                                       (make-body-userdata :name 'planet 
-                                                           :type :planet
-                                                           :draw-fn planet-draw)
-                                       {:pos [0 0]
-                                        :shape 5
-                                        :dynamic false
-                                        :friction 0.00
-                                        :draw-fn planet-draw
-                                        :angle PI}))
-                (-> % :gravity (swap! (constantly 15000)))
-                %))
+  (clear-agent-errors game)  
 
-;  (map #(send game %)
-;       [#(merge % (setup-world))
-;        #(do (generate-stars (:wrap-world-box %) [10 4] game)e %)
-;        #(assoc % :player (make-player 1 :red))
-;        #(do (swap! (-> % :player-control) (constantly (fn [tick] (player-control (-> @game :player :state))))) %)
-;        #(do ((-> % :player :state) :reset) %)
-;        #(do  %)
-;        #(do;; planet body           
-;           (add-event 0 (make-body *world*
-;                                   (make-body-userdata :name 'planet 
-;                                                       :type :planet
-;                                                       :draw-fn planet-draw)
-;                                   {:pos [0 0]
-;                                    :shape 5
-;                                    :dynamic false
-;                                    :friction 0.00
-;                                    :draw-fn planet-draw
-;                                    :angle PI}))
-;           (-> % :gravity (swap! (constantly 15000)))
-;           %)])
-)
+  ;; setup game state
+  (send game 
+        (fn [_] 
+          (-> {}
+              (merge (setup-world))
+              (assoc :player (make-player 1 :red)))))
+  
+  (await game)
+  (redef draw [] (my-draw @world-state))
+
+  (send game 
+        (fn [G]
+          ;;(generate-stars (:wrap-world-box %) [10 4] game)
+          ;; enable player control
+          (swap! (-> G :player-control) 
+                 (constantly (fn [tick] (player-control (-> @game :player :state)))))
+          ;; rescurrect player
+          ((-> G :player :state) :reset (-> G :player :name))
+          ((-> G :player :state) :alive)
+          ;; planet body           
+          (add-event 0 (make-body *world*
+                                  (make-body-userdata :name 'planet 
+                                                      :type :planet
+                                                      :draw-fn planet-draw)
+                                  {:pos [0 0]
+                                   :shape 5
+                                   :dynamic false
+                                   :friction 0.00
+                                   :draw-fn planet-draw
+                                   :angle PI}))
+          ;; apply gravity
+          (-> G :gravity (swap! (constantly 15000)))
+          ;; do not change the agent
+          G)))
+
 
 (defn reset-player []
   ((or (-> @game :player :state) (fn [_])) :destroy)
@@ -300,8 +294,7 @@
 ;    (println (format "player %s hit by bullet %s" b1 b0))
 ;    ))
 
-;;(with-jbox2d (register-contact-multimethod *world*))
-
+;; (with-jbox2d (register-contact-multimethod *world*))
 
 (comment
 
@@ -320,12 +313,15 @@
 
   (with-jbox2d (destroy-body *world* (.get *state* (-> @game :player :name))))
 
-  (with-jbox2d (dotimes [n 100] (make-circle 'foo {}))))
-
-
-
-
-
+  (with-jbox2d (dotimes [n 100] (make-circle 'foo {})))
+  
+  (with-jbox2d (body-userdata (.get *state* 1) :foo))
+(with-jbox2d (dorun (map #(body-userdata %) (query *world*))))   
+(with-jbox2d (iter (for shape in-array (query *world*))
+                   (for body as (.getBody shape))
+                   (for userdata as (body-userdata body))
+                   (collect userdata)))
+)
 
 (comment
   (setup-game)

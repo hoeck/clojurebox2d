@@ -1,6 +1,8 @@
 
 (ns hoeck.clojurebox2d.statemachine)
 
+;; functions and macros to define and use state machines
+
 (defn- make-state-method-argvec
   "(make-state-method-argvec [sm :a :b msg-arg]) -> [{:keys [a b]} state-machine msg1234 msg-arg])"
   [argvec]
@@ -12,20 +14,33 @@
 
 (defmacro defsmethod
   "Define a state machine transition method which is triggered on the
-  given message-key signal.
+  given message-key.
   Captures `state-machine' and binds it to the state-machine function
   we're running in.
-  state-method-args is a simplified parameter list, a number of keys to which
+  `state-method-args' is a simplified parameter list, a number of keys to which
   current state-map values are bound followed by optional arguments from the
-  message."
+  message.
+  The return value of defsmethod is merged with the current state of the state-machine, so
+  it should be either nil or a hashmap."
   [name message-key state-method-args & body]
   `(defmethod ~name ~message-key ~(make-state-method-argvec state-method-args)     
      ~@body))
 
-(defmacro def-state-machine [name]
+(defmacro def-state-machine
+  "Define name to be a state-machine function. Use defsmethod to define
+  state-machine-functions and make-state-machine to generate a state-machine."
+  [name]
   `(defmulti ~name (fn [state# state-machine# msg# & msg-args#] msg#)))
 
-(defn make-state-machine 
+(defn make-state-machine
+  "Makes a state machine from the given state-machine-function
+  (a multimethod declared with def-state-machine).
+    (let [sm (make-state-machine sfn)]
+      (sm) -> returns the state-agent
+      (sm :msg args ...)) -> sends sfn to agent: (send sfn state this msg args ..), 
+                             merges back the results.
+  Additional params to make-state-machine are messages that are executed right after
+  the creatoin of the state machine."
   ([state-machine-fn]
      (let [state-agent (agent {})]
        (fn state-machine
@@ -52,17 +67,13 @@
        (apply smfn init)
        smfn)))
 
-(defn make-debugging-state-machine  
-  [debug-atom state-machine-fn & rest]
-  (swap! debug-atom (constantly []))
-  (apply make-state-machine #(do (swap! debug-atom conj %&) 
-                                 (apply state-machine-fn %&))
-         rest))
-
-(defn print-statemachine-errors [sm]
+(defn throw-statemachine-errors
+  "Throw the first errors of the statemachine sm in the current Thread or
+  return nil."
+  [sm]
   (let [a (sm)]
     (when-let [ae (agent-errors a)]
-      (.printStackTrace (first ae)))))
+      (throw (first ae)))))
 
 (comment 
   ;; example

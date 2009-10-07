@@ -4,9 +4,9 @@
 ;; functions and macros to define and use state machines
 
 (defn- make-state-method-argvec
-  "(make-state-method-argvec [sm :a :b msg-arg]) -> [{:keys [a b]} state-machine msg1234 msg-arg])"
+  "(make-state-method-argvec [sm :a :b msg-arg]) -> [{:keys [a b]} current-state-machine msg1234 msg-arg])"
   [argvec]
-  (let [default-argvec ['state-machine (gensym 'msg)]
+  (let [default-argvec ['current-state-machine (gensym 'msg)]
         [argkeys msg-args] (split-with keyword? argvec)]
     (vec (concat `[{:keys [~@(map #(symbol (name %)) argkeys)] :as ~'state-map}]
                  default-argvec
@@ -15,7 +15,7 @@
 (defmacro defsmethod
   "Define a state machine transition method which is triggered on the
   given message-key.
-  Captures `state-machine' and binds it to the state-machine function
+  Captures `current-state-machine' and binds it to the state-machine function
   we're running in.
   `state-method-args' is a simplified parameter list, a number of keys to which
   current state-map values are bound followed by optional arguments from the

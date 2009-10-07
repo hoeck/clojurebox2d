@@ -298,7 +298,16 @@
         (recur (if (odd? x)
                  (+ sum x)
                  sum))
-        sum)  
+        sum)
+
+  (iter (for x in [1 2 3])
+        (with sum 0)
+        (with bla 0)
+        (recur (if (odd? x)
+                 (+ sum x)
+                 sum)
+               (+ bla x))
+        [sum bla])
   
   (iter (let a 1)
         (for i in '(1 2 3))

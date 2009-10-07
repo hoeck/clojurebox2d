@@ -128,6 +128,23 @@ x1,y1
        (.setUserData body userdata)
        body)))
 
+;; useful for debris
+(defn make-body-ctor
+  "Returns a function creating a Body:
+  (fn body-ctor [world userdata]) which returns the created Body.
+  Memoizes shape and body definitions to allow a faster Body instantiation.
+  Use only in the jbox2d thread."
+  [args]
+  (let [sd (make-shape-def args)
+        bd (make-body-def sd args)
+        dynamic? (:dynamic args true)]
+    (fn body-ctor [#^World world userdata]
+      (let [body (.createBody world bd)]
+        (.createShape body sd)
+        (if dynamic? (.setMassFromShapes body))        
+        (.setUserData body userdata)
+        body))))
+
 (defstruct #^{:private true} body-struct
   :pos :angle :linear-velocity :angular-velocity
   :userdata)
@@ -253,3 +270,9 @@ x1,y1
         (do (.destroyBody world b)
             (recur))))
 
+(defn body-info 
+  "Return a vector of userdata of all bodies."
+  [#^World world]
+  (iter (for shape in-array (query world))
+        (for body as (.getBody shape))
+        (collect (.getUserData body))))

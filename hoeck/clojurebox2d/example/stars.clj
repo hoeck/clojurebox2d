@@ -5,8 +5,8 @@
         hoeck.clojurebox2d.jbox2d
         hoeck.clojurebox2d.utils
         hoeck.clojurebox2d.processing
-        hoeck.clojurebox2d.processing-utils
-        hoeck.clojurebox2d.example.colors
+        hoeck.clojurebox2d.processing.utils
+        hoeck.clojurebox2d.processing.colors
         hoeck.iterate
         rosado.processing))
 

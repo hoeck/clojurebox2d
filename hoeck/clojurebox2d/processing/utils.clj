@@ -1,7 +1,8 @@
 
 ;; "primitives for 2d drawing & some vector math"
-(ns hoeck.clojurebox2d.processing-utils
-  (:use hoeck.clojurebox2d.processing
+(ns hoeck.clojurebox2d.processing.utils
+  (:use clojure.contrib.def
+        hoeck.clojurebox2d.processing
         hoeck.iterate
         rosado.processing)
   (:import (java.util.concurrent ArrayBlockingQueue)))
@@ -10,7 +11,7 @@
 
 (defn circle-points
   "Returns n points from a circle with radius, starting at the initial angle
-  (in radians) r0."
+  (in radians) r0."  
   [radius n r0]
   (map #(vector (* radius (cos %)) (* radius (sin %)))
        (range r0 (+ (* 2 PI) r0) (* 2 (/ PI (int n))))))
@@ -60,28 +61,50 @@
   [s [x y]]
   [(* s x) (* s y)])
 
-(defn v2+ [[x0 y0] [x1 y1]]
-  [(+ x0 x1) (+ y0 y1)])
-
+(defn v2+ 
+  ([[x0 y0] [x1 y1]]
+     [(+ x0 x1) (+ y0 y1)])
+  ([a b & more]
+     (apply v2+ (v2+ a b) more)))
 
 ;; rand
 
-(defn rrand
+(defn rrand ;; range-rand
   "Return a random value between lower and upper."
   [lower upper]
   (+ lower (rand (- upper lower))))
+
+(defn drand ;; delta-rand
+  "Return a random value between (- base delta) and (+ base delta)."
+  [base delta]
+  (rrand (- base delta) (+ base delta)))
 
 (defn rand-nth
   "randomly pick an element from a sequence s (using nth)."
   [s]
   (nth s (rand-int (count s))))
 
-(defn rand-circle-point
-  "Return a random vector on the unit circle."
-  []
-  (let [a (rrand 0 (* 2 PI))]
-    [(cos a) (sin a)]))
+(defn rand-arc-point
+  "Return a random vector on the unit circle within min and max
+  alpha in radians.
+  Defaults to 0 .. TWO_PI == whole circle."
+  ([] (rand-arc-point 0 TWO_PI))
+  ([min max]
+     (let [a (rrand min max)]
+       [(cos a) (sin a)])))
 
+(defn rand-circle-point
+  [] (rand-arc-point))
+
+(defn rand-triangle
+  "Return a random triangle while avoiding too strange shapes where
+  min triangle height << perimeter radius."
+  [perimeter]
+  (let [offset (rrand 0 TWO_PI)]
+    (map #(let [p (* (drand % 1/8) TWO_PI)]
+            [(* (cos (+ offset p)) perimeter)
+             (* (sin (+ offset p)) perimeter)])
+         [1/6 3/6 5/6])))
 
 ;; processing helpers
 
@@ -106,5 +129,11 @@
              (swap! img (constantly (get-pixel))))
          (try (background-image @img) (catch Exception e nil))))))
 
-(defn rgb [r g b]
-  (.color *applet* (int r) (int g) (int b)))
+;;(defn rgb [r g b]
+;;  (.color *applet* (int r) (int g) (int b)))
+
+;;(defn rgb [r g b]
+;;  (bit-or (bit-or (int b)
+;;                  (bit-shift-left (int g) 8))
+;;          (bit-shift-left (int r) 8)))
+

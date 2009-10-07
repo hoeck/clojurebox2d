@@ -4,7 +4,10 @@
         clojure.contrib.macro-utils
         clojure.walk
         clojure.contrib.def        
+        rosado.processing        
         hoeck.clojurebox2d.jbox2d
+        hoeck.clojurebox2d.processing.utils
+        hoeck.clojurebox2d.processing.colors
         hoeck.iterate)
   (:import (java.util TreeMap)           
            (java.util.concurrent ConcurrentLinkedQueue ArrayBlockingQueue)
@@ -12,6 +15,8 @@
            (org.jbox2d.collision.shapes Shape)
            (org.jbox2d.dynamics Body World ContactListener)
            (org.jbox2d.dynamics.contacts ContactPoint)))
+
+;; jbox utils
 
 ;; utils
 
@@ -81,7 +86,7 @@ Ex: (at-tick 10 2 (foo)) <=> (when (== (rem tick 10) 2) (foo))."
 
 ;; tick-timed events
 
-(defvar timed-events (atom (sorted-map)))
+(defvar timed-events (ref (sorted-map)))
 
 (defn mm-assoc
   "MultiMap assoc. Like assoc but wraps every value in a vec to
@@ -99,7 +104,7 @@ Ex: (at-tick 10 2 (foo)) <=> (when (== (rem tick 10) 2) (foo))."
 (defn schedule-event
   "Execute the given function at scheduled-tick."
   [scheduled-tick f]
-  (swap! timed-events mm-assoc scheduled-tick f))
+  (dosync (alter timed-events mm-assoc scheduled-tick f)))
 
 (defn add-event*
   "Add a function f to the event queue, to be executed in n delay-ticks.
@@ -120,17 +125,17 @@ f should take tick as the only parameter."
   and sets current-tick to 0."
   []
   (write-tick 0)
-  (swap! timed-events #(reduce dissoc % (keys %))))
+  (dosync (ref-set timed-events (sorted-map))))
 
 (defn run-timed-events
   "jbox2d-loop: function which triggers tick-timed events."
   [tick]
-  (let [q @timed-events
-        events (take-while #(<= (key %) tick) q)
-        event-fns (apply concat (map val events))]
-    (dorun (map #(% tick) event-fns))
-    (apply swap! timed-events dissoc (map key events))))
-
+  (let [event-fns (dosync (let [events (take-while #(<= (key %) tick) @timed-events)
+                                event-keys (map key events)
+                                event-fns (apply concat (map val events))] 
+                            (ref-set timed-events (apply dissoc @timed-events event-keys))
+                            event-fns))]
+    (doseq [f event-fns] (f tick))))
 
 ;; running functions 
 
@@ -260,5 +265,72 @@ f should take tick as the only parameter."
 ;; uses body userdata to decide whether body should be destroyed
 ;; or has already been destroyed
 
-(defn destroy-body [world body]
-  (when (not (body-userdata body :destroyed)) (.destroyBody *world* body)))
+(defn destroy-body
+  "Destroy a body if it was not destroyed previously. Use body-userdata :destroyed to
+  check for destruction. "
+  [world body]
+  (when (not (body-userdata body :destroyed))
+    (.destroyBody *world* body)
+    (alter-body-userdata body assoc :destroyed true)))
+
+
+;; explosions
+
+(defn- explosion-circle-points 
+  [center radius n]
+  (map #(v2+ center %) (circle-points radius count)))
+
+(defn- make-random-triangle-ctor
+  [perimeter]
+  (let [black (color :black)
+        white (color :white)
+        tri-vecs (vec (rand-triangle perimeter))
+        tri-draw (fn triangle-draw [[[x0 y0] [x1 y1] [x2 y2]]]
+                   (stroke-weight 1)
+                   (stroke-int black)
+                   (fill-int white)
+                   (triangle x0 y0 x1 y1 x2 y2))
+        bu (make-body-userdata :name (gensym 'triangle)
+                               :type :debris
+                               :draw-fn tri-draw)
+        b-ctor (make-body-ctor {:shape tri-vecs
+                                :linear-damping 2
+                                :angular-damping 0.3})]
+    (fn [pos]
+      (let [b (b-ctor *world* bu)]
+        (.setXForm b (vec2 pos) 0)
+        b))))
+
+(let [m-circle-points (memoize circle-points)]
+  (defn- make-explosion-1-coords
+    "Return debris-amount Vec2s representing points on a circular path with radius."
+    [radius debris-amount]
+    (map vec2 (m-circle-points radius debris-amount 0))))
+
+(defn destroy-debris-event [delay bodies]
+  (add-event delay
+    (doseq [b bodies]
+      (destroy-body *world* b))))
+
+(let [explosion-triangles (repeatedly #(make-random-triangle-ctor (rrand 0.35 0.6)))]
+  (defn make-explosion-1
+    "Add debris-amount Little triangles on a circular path with radius around body,
+  forming the shells of an explosion.
+  Initialize them with the Bodies velocity and apply an impulse of some intensity
+  so that they move away from the body.
+  Return the bodies"
+    ([#^Body body] (make-explosion-1 body 2 60 2))
+    ([#^Body body radius debris-amount intensity]
+       (let [body-pos (.getWorldCenter body)
+             explosion-points (make-explosion-1-coords radius debris-amount)
+             ;;debris (map #(make-random-triangle (.add body-pos %) (rrand 0.35 0.6)) explosion-points)
+             debris (map #(%1 (.add body-pos %2)) explosion-triangles explosion-points)]
+         (doseq [#^Body d debris]
+           (.setLinearVelocity d (.getLinearVelocity body))
+           (.setAngularVelocity d (drand 0 1))
+           (.applyImpulse d
+                          (.mul (.sub (.getWorldCenter d) body-pos) intensity)
+                          (.getWorldCenter d)))
+         (destroy-debris-event 400 debris)
+         debris))))
+

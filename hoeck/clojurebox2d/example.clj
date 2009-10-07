@@ -5,12 +5,13 @@
         hoeck.clojurebox2d.jbox2d
         hoeck.clojurebox2d.utils
         hoeck.clojurebox2d.processing
-        hoeck.clojurebox2d.processing-utils
+        hoeck.clojurebox2d.processing.utils
+        hoeck.clojurebox2d.processing.colors
+        hoeck.clojurebox2d.processing.widgets
 
         ;; example libs
         hoeck.clojurebox2d.example.player
         hoeck.clojurebox2d.example.stars
-        hoeck.clojurebox2d.example.colors
         
         ;; additional libs
         hoeck.iterate
@@ -69,7 +70,6 @@
     (let [clojure-body-definitions (iter (for shape in-array (query *world*))                                         (collect (jbox->clojurebox shape)))]
       (swap! world-state (constantly clojure-body-definitions)))))
 
-
 ;; draw
 
 (defn default-style []
@@ -102,20 +102,41 @@
   (doseq [s (@game :stars)] 
     (s)))
 
+(declare player)
+;;; initing draw-hud when colors are initialized!
+(let [p1-vit (make-levelmeter :a-data-fn #(- 1 (player-get-vitality (player 1)))
+                              :color-a (color :white)
+                              :color-b (color :red)
+                              :stroke-color (color :black)
+                              :size [50 10]
+                              :direction :horizontal)
+      p2-vit (make-levelmeter :a-data-fn #(player-get-vitality (player 2))
+                              :color-a (color :blue)
+                              :color-b (color :white)
+                              :stroke-color (color :black)
+                              :size [50 10]
+                              :direction :horizontal)]  
+  (defn draw-hud []
+    (when (player 1) (place-widget p1-vit :right :bottom 5))
+    (when (player 2) (place-widget p2-vit :left :bottom 5))))
+
 (defn my-draw
   "Draws all body shapes (only boxes for now) using quad."
   [world-state]
-  (no-smooth)
+  ;;(no-smooth)
+
   ;; camera transformations
   (let [[offset, zoom] @my-camera]
-    (translate offset)
-    (scale zoom))
+    (with-translation offset
+      (scale zoom)
 
-  (memoized-background draw-background-stars applet-resized?)
-
-  ;; drawing bodies
-  (doseq [[shape-data {:keys [draw-fn]}] world-state]
-    (if draw-fn (draw-fn shape-data))))
+      (memoized-background draw-background-stars applet-resized?)
+    
+    ;; drawing bodies
+      (doseq [[shape-data {:keys [draw-fn]}] world-state]
+        (if draw-fn (draw-fn shape-data)))))
+  (scale 1)
+  (draw-hud))
 
 ;; center the current *world* on resize
 ;; adjust zoom so that the whole *world* fits in the frame
@@ -184,38 +205,19 @@
 
 (def game (agent {}))
 
-;; setup
-(comment
-  (defn restart-game []
-    ;; add some test objects
-    (with-jbox2d
-      (clear-world *world*);; remove all objects from world
-      (let [state *state*
-            player-red (make-player-body *world* 'player-1 player-1-draw
-                                         {:pos [0 +14] :angular-damping 2.0 :linear-damping 0 :angle 0})
-            player-blue (make-player-body *world* 'player-2 player-2-draw
-                                          {:pos [0 -14] :angular-damping 2.0 :linear-damping 0})
-            planet   (make-circle *world* 'planet :radius 5 :dynamic false :friction 0.03 :draw-fn planet-draw :angle PI)]
-      
-        ;; store
-        (.put state 'player-red player-red)
-        (.put state player-red (HashMap.));; player-1 data, like bullet count
+(defn player
+  "accessor for the player statemachines."
+  ([] (when game (@game :player)))
+  ([player-name & args]
+     (when (and game @game)
+       (if args
+         (apply ((@game :player) player-name) args)
+         ((@game :player) player-name)))))
 
-        (.put state 'player-blue player-blue)
-        (.put state player-blue (HashMap.));; player 2 data
-
-        (.put state 'planet planet)
-
-        ;; initial thrust
-        (.setLinearVelocity player-red (vec2 [19 0]))
-        (.setLinearVelocity player-blue (vec2 [-19 0]))))))
-
-
-;; no title
-
-(defn setup-world [] 
+(defn setup-world []
   
   (init {:gravity [0 0] :smooth false :setup-hook color-setup})
+  (write-tick 0)
 
   (let [gravity (atom 0)
         player-c (atom (fn [_]))
@@ -242,26 +244,28 @@
 
 (defn initialize []
   (clear-agent-errors game)  
+  (redef draw [] (my-draw []))
 
   ;; setup game state
   (send game 
         (fn [_] 
           (-> {}
               (merge (setup-world))
-              (assoc :player (make-player 1 :red)))))
-  
+              (assoc-in [:player 1] (make-player 1 :red))
+              (assoc-in [:player 2] (make-player 2 :blue)))))
+
   (await game)
   (redef draw [] (my-draw @world-state))
 
-  (send game 
+  (send game
         (fn [G]
           ;;(generate-stars (:wrap-world-box %) [10 4] game)
           ;; enable player control
-          (swap! (-> G :player-control) 
-                 (constantly (fn [tick] (player-control (-> @game :player :state)))))
+          (swap! (G :player-control) 
+                 (constantly (fn [tick] (two-player-control (player 1) (player 2)))))
           ;; rescurrect player
-          ((-> G :player :state) :reset (-> G :player :name))
-          ((-> G :player :state) :alive)
+          ;;((G :player) :reset)
+          ;;((G :player) :alive)
           ;; planet body           
           (add-event 0 (make-body *world*
                                   (make-body-userdata :name 'planet 
@@ -278,49 +282,24 @@
           ;; do not change the agent
           G)))
 
+;; let weapons damage the player
+(defmethod contact [:bullet :player] [b0 b1 t cp]
+  (when (= t :add)
+    ;; destroy the bullet
+    (add-event 0 ((body-userdata b0 :destroy-method)))
+    (player (body-userdata b1 :name) :hit 1)))
 
-(defn reset-player []
-  ((or (-> @game :player :state) (fn [_])) :destroy)
-  (dorun (map #(send game %)
-              [#(assoc % :player (make-player 1 :red))
-               #(do (swap! (-> % :player-control) (constantly (fn [tick] (player-control (-> @game :player :state))))) %)
-               #(do ((-> % :player :state) :reset) %)
-               #(do ((-> % :player :state) :alive) %)])))
+;; debris is destroyed on planet contact
+(defmethod contact [:debris :planet] [b0 b1 t cp]
+  (add-event 0 (destroy-body *world* b0)))
 
-
-;(defmethod contact [:bullet :player] [b0 b1 t cp]
-;  (when (= t :add)
-;    (add-event )
-;    (println (format "player %s hit by bullet %s" b1 b0))
-;    ))
-
-;; (with-jbox2d (register-contact-multimethod *world*))
 
 (comment
 
   ;;(with-jbox2d (:draw-fn (first (map #(-> % .getBody body-userdata) (seq (query *world*))))))
   ;;(show-sketch! (fn [] (with-jbox2d (:draw-fn (first (map #(-> % .getBody body-userdata) (seq (query *world*))))) [[0 0] [-1 1] [1 -1]])))
 
-  ((-> @game :player :state))
-  ((-> @game :player :state) :reset)
-  ((-> @game :player :state) :alive)
-  ((-> @game :player :state) :move :left)
-  ((-> @game :player :state) :move :right)
-  (dotimes [n 1000] ((-> @game :player :state) :move :thrust))
-  ((-> @game :player :state) :destroy)
-  (with-jbox2d (.destroyBody *world* (.get *state* (-> @game :player :name))))
-  (with-jbox2d *state*)
-
-  (with-jbox2d (destroy-body *world* (.get *state* (-> @game :player :name))))
-
-  (with-jbox2d (dotimes [n 100] (make-circle 'foo {})))
-  
-  (with-jbox2d (body-userdata (.get *state* 1) :foo))
-(with-jbox2d (dorun (map #(body-userdata %) (query *world*))))   
-(with-jbox2d (iter (for shape in-array (query *world*))
-                   (for body as (.getBody shape))
-                   (for userdata as (body-userdata body))
-                   (collect userdata)))
+  (with-jbox2d (body-info *world*))
 )
 
 (comment

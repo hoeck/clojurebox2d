@@ -9,8 +9,16 @@ clj-processing: www.github.com/rosado/clj-processing
 jbox2d: www.jbox2d.org -- included in deps/
 processing: www.processing.org (core.jar) -- included in deps/
 
-user> (require 'hoeck.clojurebox2d)
-user> (example)
+user> (require 'hoeck.clojurebox2d.example)
+user> (initialize)
 
-See clojurebox.clj for the definition of example.
+loads a simple example 2 player space shooting game.
+
+controls are (thrust, brake, turn left/right, fire)
+        up,down,left,right,space for player 1
+        w,a,s,d,q for player 2
+
+
+        
+
 

@@ -145,6 +145,14 @@
     (let [b (make-bullet player player-state-machine)]
       (add-event 150 (b)))))
 
+(defn initial-player-impulse
+  "Add an impulse to player orthogonally to the planet surface."
+  [player-body amount]
+  ;; assume one planet in the center of the world
+  (let [pos (.getWorldCenter player-body)
+        impulse-vec (vec2 (v2* amount (v2-orthogonal (vec2->clj pos))))]
+    (.applyImpulse player-body impulse-vec pos)))
+
 ;; model player with a state machine:
 (def-state-machine player-state)
 
@@ -160,8 +168,13 @@
                           (make-body-userdata :name player-name
                                               :draw-fn draw-fn
                                               :type :player)
-                          {:pos [(rrand -50 50) (rrand -30 30)]})]
-                   (.put *state* player-name b))))
+                          {:pos ;[(rrand -50 50) (rrand -30 30)]
+                           (v2* (rand-nth [25 33 42]) (rand-arc-point))
+                           })]
+                   (.put *state* player-name b)
+                   ;; initial impulse
+                   (initial-player-impulse b 50)
+                   )))
   (add-event 30 (current-state-machine :alive))
   {:state :init
    :hp (constants :hitpoints)
@@ -203,6 +216,12 @@
 (defsmethod player-state :bullet-dec [:bullets]
   {:bullets (dec bullets)})
 
+(defsmethod player-state :apply-impulse [:player-name impulse-vec]
+  (add-event 0
+    (when-let [p (.get *state* player-name)]
+      (.applyImpulse p (vec2 impulse-vec) (.getWorldCenter p))))
+  nil)
+
 ;; player ctor
 (defn make-player
   "returns state machine fn."
@@ -216,3 +235,4 @@
   [player-sm]
   (when player-sm
     (/ (or (@(player-sm) :hp) 0) (:hitpoints constants))))
+

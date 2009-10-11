@@ -67,6 +67,48 @@
   ([a b & more]
      (apply v2+ (v2+ a b) more)))
 
+(defn v2-abs
+  "Return the len of the vector."
+  [[x y]]
+  (Math/sqrt (+ (* x x) (* y y))))
+
+(defn v2-inner [[x0 y0] [x1 y1]]
+  (+ (* x0 x1) (* y0 y1)))
+
+(defn v2-quadrant
+  "return a [1.0,1.0] (double-vector) into the quadrant the given vector belongs to."
+  [[x y]]
+  [(if (not= x 0)
+     (/ x (Math/abs (double x)))
+     1.0)
+   (if (not= y 0)
+     (/ y (Math/abs (double y)))
+     1.0)])
+
+(defn v2-orthogonal
+  "return a normalized double vector orthogonal to the given one, always pointing
+  in the same direction (relative to the given vec)."
+  [[x y]]
+  (let [ty-squared-1 #(if (== x 0)
+                        0
+                        ( / 1 
+                            (+ (/ (* y y)
+                                  (* x x))
+                               1)))
+        tx-from-ty #(if (== x 0)
+                      1
+                      (- (/ (* y %)
+                            x)))
+        abs-ty (Math/sqrt (double (ty-squared-1)))
+        abs-tx (Math/abs (double (tx-from-ty abs-ty)))
+        quadrant-correction {[ 1.0  1.0] [-1.0  1.0]
+                             [-1.0  1.0] [-1.0 -1.0]
+                             [-1.0 -1.0] [ 1.0 -1.0]
+                             [ 1.0 -1.0] [ 1.0  1.0]}
+        [cx cy] (quadrant-correction (v2-quadrant [x y]))]
+    [(* abs-tx cx) 
+     (* abs-ty cy)]))
+
 ;; rand
 
 (defn rrand ;; range-rand

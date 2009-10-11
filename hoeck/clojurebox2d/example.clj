@@ -102,41 +102,24 @@
   (doseq [s (@game :stars)] 
     (s)))
 
-(declare player)
-;;; initing draw-hud when colors are initialized!
-(let [p1-vit (make-levelmeter :a-data-fn #(- 1 (player-get-vitality (player 1)))
-                              :color-a (color :white)
-                              :color-b (color :red)
-                              :stroke-color (color :black)
-                              :size [50 10]
-                              :direction :horizontal)
-      p2-vit (make-levelmeter :a-data-fn #(player-get-vitality (player 2))
-                              :color-a (color :blue)
-                              :color-b (color :white)
-                              :stroke-color (color :black)
-                              :size [50 10]
-                              :direction :horizontal)]  
-  (defn draw-hud []
-    (when (player 1) (place-widget p1-vit :right :bottom 5))
-    (when (player 2) (place-widget p2-vit :left :bottom 5))))
-
 (defn my-draw
   "Draws all body shapes (only boxes for now) using quad."
-  [world-state]
+  ([world-state] (my-draw world-state nil))
+  ([world-state osd-draw-fn]
   ;;(no-smooth)
 
   ;; camera transformations
-  (let [[offset, zoom] @my-camera]
-    (with-translation offset
-      (scale zoom)
+     (let [[offset, zoom] @my-camera]
+       (with-translation offset
+         (scale zoom)
 
-      (memoized-background draw-background-stars applet-resized?)
+         (memoized-background draw-background-stars applet-resized?)
     
-    ;; drawing bodies
-      (doseq [[shape-data {:keys [draw-fn]}] world-state]
-        (if draw-fn (draw-fn shape-data)))))
-  (scale 1)
-  (draw-hud))
+         ;; drawing bodies
+         (doseq [[shape-data {:keys [draw-fn]}] world-state]
+           (if draw-fn (draw-fn shape-data)))))
+     (scale 1)
+     (when osd-draw-fn (osd-draw-fn))))
 
 ;; center the current *world* on resize
 ;; adjust zoom so that the whole *world* fits in the frame
@@ -201,6 +184,7 @@
                                  (.getAngularVelocity b)]))]
       (swap! current-body-state (constantly {:tick tick :state bstate})))))
 
+
 ;; game state
 
 (def game (agent {}))
@@ -213,6 +197,29 @@
        (if args
          (apply ((@game :player) player-name) args)
          ((@game :player) player-name)))))
+
+
+;; On Screen Display
+
+(defn make-osd-draw-fn []
+  (let [p1-vit (make-levelmeter :a-data-fn #(- 1 (player-get-vitality (player 1)))
+                                :color-a (color :white)
+                                :color-b (color :red)
+                                :stroke-color (color :black)
+                                :size [50 10]
+                                :direction :horizontal)
+        p2-vit (make-levelmeter :a-data-fn #(player-get-vitality (player 2))
+                                :color-a (color :blue)
+                                :color-b (color :white)
+                                :stroke-color (color :black)
+                                :size [50 10]
+                                :direction :horizontal)]  
+    (fn draw-osd []
+      (when (player 1) (place-widget p1-vit :right :bottom 5))
+      (when (player 2) (place-widget p2-vit :left :bottom 5)))))
+
+
+;; clojurebox2d setup
 
 (defn setup-world []
   
@@ -242,7 +249,12 @@
      :wrap-world-box worldsize
      :player-control player-c}))
 
-(defn initialize []
+
+;; game setup
+
+(defn initialize
+  "Set up clojurebox2d and the game state"
+  []
   (clear-agent-errors game)  
   (redef draw [] (my-draw []))
 
@@ -255,7 +267,7 @@
               (assoc-in [:player 2] (make-player 2 :blue)))))
 
   (await game)
-  (redef draw [] (my-draw @world-state))
+  (redef draw [] (my-draw @world-state (make-osd-draw-fn)))
 
   (send game
         (fn [G]
@@ -293,66 +305,9 @@
 (defmethod contact [:debris :planet] [b0 b1 t cp]
   (add-event 0 (destroy-body *world* b0)))
 
-
-(comment
-
-  ;;(with-jbox2d (:draw-fn (first (map #(-> % .getBody body-userdata) (seq (query *world*))))))
-  ;;(show-sketch! (fn [] (with-jbox2d (:draw-fn (first (map #(-> % .getBody body-userdata) (seq (query *world*))))) [[0 0] [-1 1] [1 -1]])))
-
-  (with-jbox2d (body-info *world*))
-)
-
-(comment
-  (setup-game)
-
-  (with-jbox2d (clear-world *world*))
-  (with-jbox2d (dotimes [n 40] (make-star [39 30])))
-  (with-jbox2d
-    ;; test shortlived objects
-    (dotimes [n 100]
-      (let [b (make-circle 'foo {:pos [10, 10]})]
-        (add-event* (* n 30) (fn [tick] (.destroyBody *world* b)))))
-    
-    )
-  (with-jbox2d
-    (dotimes [n 2]
-      (make-box 'foo {:pos [10, 10] :shape [1 1]}))
-    
-    )
-  
-  (with-applet (my-draw @world-state))
-
-  (with-jbox2d (make-circle 'planet-2
-                            {:pos [0 0]
-                             :radius 10
-                             :dynamic false
-                             :friction 0.03
-                             :draw-fn planet-draw
-                             :angle PI}))
-
-  (with-jbox2d
-    (make-circle 'planet-1
-                 {:pos [-30 -20]
-                  :radius 5
-                  :dynamic false
-                  :friction 0.03
-                  :draw-fn planet-draw
-                  :angle PI})
-    (let [b
-          (make-circle 'planet-2
-                       {:pos [30 20]
-                        :radius 5
-                        :dynamic false
-                        :friction 0.03
-                        :draw-fn planet-draw
-                        :angle PI})]
-
-      (.getWorldCenter b)))
-
-  )
-
-
-
+;; debris add small amount of damage to the player
+(defmethod contact [:debris :player] [b0 b1 t cp]
+  (player (body-userdata b1 :name) :hit 0.1))
 
 ;; game thread:
 ;; mode: client/server
